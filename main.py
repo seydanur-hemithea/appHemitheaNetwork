@@ -13,8 +13,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-UPLOAD_DIR = "uploads"
+BASE_DIR = os.path.dirname(os.path.abspath(_file_))
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
     # 2. BU SATIRI EKLE: 'uploads' klasörünü dış dünyaya açıyoruz
