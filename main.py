@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import shutil
 import os
 
@@ -16,6 +17,9 @@ app.add_middleware(
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
+    # 2. BU SATIRI EKLE: 'uploads' klasörünü dış dünyaya açıyoruz
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
 
 @app.post("/upload-csv")
 async def upload_file(file: UploadFile = File(...)):
@@ -23,7 +27,8 @@ async def upload_file(file: UploadFile = File(...)):
         file_path = os.path.join(UPLOAD_DIR, "data.csv")
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        return {"status": "success", "message": f"{file.filename} yüklendi."}
+        return {"status": "success", "message": f"{file.filename} yüklendi.",
+               "url":"/uploads/data.csv"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
