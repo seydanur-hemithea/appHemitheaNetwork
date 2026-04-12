@@ -1,3 +1,10 @@
 fastapi
 uvicorn
 python-multipart
+os
+shutil
+time
+datetime
+typing
+sqlalchemy
+passlib
