@@ -76,25 +76,39 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # --- 5. ENDPOINTLER (Yollar) ---
 
+# main.py içindeki register fonksiyonun tam hali bu olmalı:
+
 @app.post("/register")
 def register(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    # 1. Önce bu kullanıcı adı veritabanında var mı diye bakıyoruz
     db_user = db.query(User).filter(User.username == username).first()
     if db_user:
-        raise HTTPException(status_code=400, detail="Bu kullanıcı adı zaten alınmış.")
-    
-    hashed_pwd = pwd_context.hash(password)
-    new_user = User(username=username, hashed_password=hashed_pwd)
+        # Eğer varsa 400 hatası döndür ki Android tarafı "Zaten var" desin
+        raise HTTPException(status_code=400, detail="User already registered")
+
+    # 2. Şifreyi güvenli hale getiriyoruz (Bcrypt 72 karakter sınırı için)
+    safe_password = password[:72] 
+
+    # 3. Şifreyi hash'liyoruz (Şifreliyoruz)
+    hashed_password = pwd_context.hash(safe_password)
+
+    # 4. Yeni kullanıcıyı oluşturup veritabanına kaydediyoruz
+    new_user = User(username=username, hashed_password=hashed_password)
     db.add(new_user)
     db.commit()
-    return {"status": "success", "message": "Kayıt başarılı!"}
-
+    db.refresh(new_user)
+    
+    return {"status": "success", "message": "Kayıt başarılı"}
+    
 @app.post("/login")
 def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == username).first()
-    if not user or not pwd_context.verify(password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Hatalı kullanıcı adı veya şifre.")
-    return {"status": "success", "user_id": user.id, "username": user.username}
-
+    db_user = db.query(User).filter(User.username == username).first()
+    
+    # Giriş yaparken de gelen şifreyi 72 karakterle sınırlayıp öyle kontrol et
+    if not db_user or not pwd_context.verify(password[:72], db_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Hatalı kullanıcı adı veya şifre")
+    
+    return {"user_id": db_user.id, "username": db_user.username}
 @app.post("/upload-csv")
 async def upload_file(
     background_tasks: BackgroundTasks,
