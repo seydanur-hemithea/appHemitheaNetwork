@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta
 from typing import List
 import uvicorn
+import bcrypt
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
