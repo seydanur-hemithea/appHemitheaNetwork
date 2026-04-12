@@ -94,47 +94,39 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 @app.post("/register")
 def register(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    try:
-        # Önce kullanıcı var mı kontrolü
-        db_user = db.query(User).filter(User.username == username).first()
-        if db_user:
-            raise HTTPException(status_code=400, detail="User already registered")
+    # Kullanıcı kontrolü...
+    db_user = db.query(User).filter(User.username == username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="User already registered")
 
-        # Şifreleme işlemi
-        hashed_pw = pwd_context.hash(password[:72])
-        
-        # Yeni kullanıcı ekleme
-        new_user = User(username=username, hashed_password=hashed_pw)
-        db.add(new_user)
-        db.commit()
-        # Refresh bazen sorun çıkarabilir, opsiyoneldir
-        # db.refresh(new_user) 
-        
-        return {"status": "success", "message": "Kayıt başarılı"}
-    except Exception as e:
-        print(f"REGISTER HATASI: {str(e)}")
-        raise HTTPException(status_code=500, detail="Sunucu kaydı yapamadı.")
+    # --- GÜVENLİ ŞİFRELEME (72 BYTE SINIRI İÇİN) ---
+    # Şifreyi byte'a çevirip ilk 72 byte'ı alıyoruz
+    password_bytes = password.encode('utf-8')
+    safe_password_bytes = password_bytes[:72]
+    # Tekrar string'e çeviriyoruz ki passlib hata vermesin
+    safe_password = safe_password_bytes.decode('utf-8', errors='ignore')
+
+    hashed_password = pwd_context.hash(safe_password)
+    # -----------------------------------------------
+
+    new_user = User(username=username, hashed_password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    return {"status": "success"}
     
 @app.post("/login")
 def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    try:
-        db_user = db.query(User).filter(User.username == username).first()
-        
-        if not db_user:
-            raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
+    db_user = db.query(User).filter(User.username == username).first()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User not found")
 
-        # Şifre kontrolü yaparken hata oluşursa 'except' bloğuna düşecek
-        is_verified = pwd_context.verify(password[:72], db_user.hashed_password)
+    # Giriş şifresini de aynı byte kuralıyla temizle
+    safe_login_password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
+    
+    if not pwd_context.verify(safe_login_password, db_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect password")
         
-        if not is_verified:
-            raise HTTPException(status_code=401, detail="Hatalı şifre")
-        
-        return {"user_id": db_user.id, "username": db_user.username}
-
-    except Exception as e:
-        # Bu satır sayesinde hatayı Render loglarında kabak gibi göreceğiz
-        print(f"KRİTİK LOGIN HATASI: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Sunucu içi hata: {str(e)}")
+    return {"user_id": db_user.id, "username": db_user.username}
 @app.post("/upload-csv")
 async def upload_file(
     background_tasks: BackgroundTasks,
