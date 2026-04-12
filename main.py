@@ -13,7 +13,12 @@ from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
 # --- 1. VERİTABANI AYARLARI ---
-SQLALCHEMY_DATABASE_URL = "sqlite:///./hemithea.db"
+BASE_DIR = os.path.dirname(os.path.abspath(_file_))
+db_path = os.path.join(BASE_DIR, "hemithea.db")
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
+
+
+
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -76,7 +81,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # --- 5. ENDPOINTLER (Yollar) ---
 
-# main.py içindeki register fonksiyonun tam hali bu olmalı:
+
 
 @app.post("/register")
 def register(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
