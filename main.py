@@ -13,19 +13,22 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
-# --- 1. VERİTABANI AYARLARI ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(_file_))
 db_path = os.path.join(BASE_DIR, "hemithea.db")
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
 
-
-
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, 
+    connect_args={"check_same_thread": False}
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Şifre gizleme (hashing) ayarı
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Şifreleme ayarını daha basit ve hata vermez hale getirelim
+try:
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+except Exception as e:
+    print(f"Bcrypt başlatılamadı: {e}")
 
 # --- 2. VERİ MODELLERİ (Tablolar) ---
 class User(Base):
@@ -86,25 +89,26 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 @app.post("/register")
 def register(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    # 1. Önce bu kullanıcı adı veritabanında var mı diye bakıyoruz
-    db_user = db.query(User).filter(User.username == username).first()
-    if db_user:
-        # Eğer varsa 400 hatası döndür ki Android tarafı "Zaten var" desin
-        raise HTTPException(status_code=400, detail="User already registered")
+    try:
+        # Önce kullanıcı var mı kontrolü
+        db_user = db.query(User).filter(User.username == username).first()
+        if db_user:
+            raise HTTPException(status_code=400, detail="User already registered")
 
-    # 2. Şifreyi güvenli hale getiriyoruz (Bcrypt 72 karakter sınırı için)
-    safe_password = password[:72] 
-
-    # 3. Şifreyi hash'liyoruz (Şifreliyoruz)
-    hashed_password = pwd_context.hash(safe_password)
-
-    # 4. Yeni kullanıcıyı oluşturup veritabanına kaydediyoruz
-    new_user = User(username=username, hashed_password=hashed_password)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    return {"status": "success", "message": "Kayıt başarılı"}
+        # Şifreleme işlemi
+        hashed_pw = pwd_context.hash(password[:72])
+        
+        # Yeni kullanıcı ekleme
+        new_user = User(username=username, hashed_password=hashed_pw)
+        db.add(new_user)
+        db.commit()
+        # Refresh bazen sorun çıkarabilir, opsiyoneldir
+        # db.refresh(new_user) 
+        
+        return {"status": "success", "message": "Kayıt başarılı"}
+    except Exception as e:
+        print(f"REGISTER HATASI: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sunucu kaydı yapamadı.")
     
 @app.post("/login")
 def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
