@@ -1,9 +1,5 @@
 fastapi
 uvicorn
 python-multipart
-shutil
-time
-datetime
-typing
 sqlalchemy
-passlib [bcrypt]
+passlib[bcrypt]
