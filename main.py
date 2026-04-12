@@ -102,13 +102,24 @@ def register(username: str = Form(...), password: str = Form(...), db: Session =
     
 @app.post("/login")
 def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.username == username).first()
-    
-    # Giriş yaparken de gelen şifreyi 72 karakterle sınırlayıp öyle kontrol et
-    if not db_user or not pwd_context.verify(password[:72], db_user.hashed_password):
-        raise HTTPException(status_code=401, detail="Hatalı kullanıcı adı veya şifre")
-    
-    return {"user_id": db_user.id, "username": db_user.username}
+    try:
+        db_user = db.query(User).filter(User.username == username).first()
+        
+        if not db_user:
+            raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
+
+        # Şifre kontrolü yaparken hata oluşursa 'except' bloğuna düşecek
+        is_verified = pwd_context.verify(password[:72], db_user.hashed_password)
+        
+        if not is_verified:
+            raise HTTPException(status_code=401, detail="Hatalı şifre")
+        
+        return {"user_id": db_user.id, "username": db_user.username}
+
+    except Exception as e:
+        # Bu satır sayesinde hatayı Render loglarında kabak gibi göreceğiz
+        print(f"KRİTİK LOGIN HATASI: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Sunucu içi hata: {str(e)}")
 @app.post("/upload-csv")
 async def upload_file(
     background_tasks: BackgroundTasks,
