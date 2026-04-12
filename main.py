@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
 # --- 1. VERİTABANI AYARLARI ---
-BASE_DIR = os.path.dirname(os.path.abspath(_file_))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 db_path = os.path.join(BASE_DIR, "hemithea.db")
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
 
@@ -64,7 +64,7 @@ def delete_expired_file(file_path: str, analysis_id: int):
     db.close()
 
 # --- 4. FASTAPI UYGULAMASI ---
-app = FastAPI(title="Hemithea API")
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
