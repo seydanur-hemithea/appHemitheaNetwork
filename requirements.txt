@@ -7,4 +7,4 @@ time
 datetime
 typing
 sqlalchemy
-passlib
+passlib [bcrypt]
