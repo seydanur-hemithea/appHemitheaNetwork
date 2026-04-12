@@ -171,7 +171,7 @@ def get_user_analyses(user_id: int, db: Session = Depends(get_db)):
     analyses = db.query(Analysis).filter(Analysis.user_id == user_id).all()
     return analyses
     
-if __name__ == "_main_":
+if __name__ == "__main__":
     # Render'ın verdiği portu al, eğer yoksa (lokaldeyken) 8000 kullan
     port = int(os.environ.get("PORT", 8000))
     
