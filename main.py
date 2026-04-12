@@ -3,6 +3,7 @@ import shutil
 import time
 from datetime import datetime, timedelta
 from typing import List
+import uvicorn
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -169,3 +170,10 @@ def save_analysis(analysis_id: int, db: Session = Depends(get_db)):
 def get_user_analyses(user_id: int, db: Session = Depends(get_db)):
     analyses = db.query(Analysis).filter(Analysis.user_id == user_id).all()
     return analyses
+    
+if _name_ == "_main_":
+    # Render'ın verdiği portu al, eğer yoksa (lokaldeyken) 8000 kullan
+    port = int(os.environ.get("PORT", 8000))
+    
+    # Host mutlaka "0.0.0.0" olmalı, yoksa dış dünyadan erişilemez
+    uvicorn.run(app, host="0.0.0.0", port=port)
