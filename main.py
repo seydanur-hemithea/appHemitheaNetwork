@@ -180,9 +180,15 @@ def save_analysis(analysis_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success", "message": "Analiz kalıcı olarak kaydedildi."}
 
-@app.get("/my-analyses/{user_id}")
-def get_user_analyses(user_id: int, db: Session = Depends(get_db)):
-    analyses = db.query(Analysis).filter(Analysis.user_id == user_id).all()
+@app.get("/my-analyses/{username}")
+def get_user_analyses(username: str, db: Session = Depends(get_db)):
+    # Önce kullanıcıyı buluyoruz
+    db_user = db.query(User).filter(User.username == username).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
+    
+    # Kullanıcının ID'sine göre analizlerini getiriyoruz
+    analyses = db.query(Analysis).filter(Analysis.user_id == db_user.id).all()
     return analyses
     
 if __name__ == "__main__":
