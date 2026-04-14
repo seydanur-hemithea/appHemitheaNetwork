@@ -190,6 +190,15 @@ def get_user_analyses(username: str, db: Session = Depends(get_db)):
     # Kullanıcının ID'sine göre analizlerini getiriyoruz
     analyses = db.query(Analysis).filter(Analysis.user_id == db_user.id).all()
     return analyses
+
+@app.get("/")
+def home():
+    # Sadece sistemin durumu hakkında bilgi verir
+    return {
+        "api_name": "Hemithea Analytics Engine",
+        "status": "active",
+        "environment": "production"
+    }
     
 if __name__ == "__main__":
     # Render'ın verdiği portu al, eğer yoksa (lokaldeyken) 8000 kullan
