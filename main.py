@@ -131,33 +131,45 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
 @app.post("/upload-csv")
 async def upload_file(
     background_tasks: BackgroundTasks,
-    user_id: int = Form(...), 
+    username: str = Form(...), 
     file: UploadFile = File(...), 
     db: Session = Depends(get_db)
 ):
-    # Kullanıcıya özel dosya ismi (seyda_123_data.csv gibi)
-    timestamp = int(time.time())
-    file_name = f"user_{user_id}_{timestamp}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, file_name)
+    # 1. Kullanıcı kontrolü
+    db_user = db.query(User).filter(User.username == username).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
+        
+    # 2. Kullanıcıya özel klasör yolu (Örn: uploads/seydanur)
+    user_folder = os.path.join(UPLOAD_DIR, username)
+    if not os.path.exists(user_folder):
+        os.makedirs(user_folder)
+
+    # 3. Sabit dosya ismi (Streamlit'in aradığı isim)
+    file_name = "network_data.csv"
+    file_path = os.path.join(user_folder, file_name)
     
+    # Dosyayı kaydet (Üzerine yazar, böylece klasör şişmez)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    # Analizi veritabanına kaydet (Geçici olarak)
-    new_analysis = Analysis(user_id=user_id, file_name=file_name)
+    # 4. Veritabanı kaydı
+    new_analysis = Analysis(
+        user_id=db_user.id, 
+        file_name=f"{username}/{file_name}"
+    )
     db.add(new_analysis)
     db.commit()
     db.refresh(new_analysis)
     
-    # Arka plan görevini başlat: 3 saat sonra silme kontrolü
+    # Arka plan görevi (3 saat sonra silme - istersen aktif kalabilir)
     background_tasks.add_task(delete_expired_file, file_path, new_analysis.id)
     
     return {
         "status": "success", 
-        "file_url": f"/uploads/{file_name}",
+        "file_url": f"/uploads/{username}/{file_name}",
         "analysis_id": new_analysis.id
     }
-
 @app.post("/save-analysis/{analysis_id}")
 def save_analysis(analysis_id: int, db: Session = Depends(get_db)):
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
