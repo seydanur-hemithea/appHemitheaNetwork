@@ -151,10 +151,10 @@ async def upload_file(
     file: UploadFile = File(...), 
     db: Session = Depends(get_db)
 ):
-try:
-        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except:
-        raise HTTPException(status_code=401, detail="Geçersiz anahtar! Lütfen tekrar giriş yapın.")
+    try:
+            jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        except:
+            raise HTTPException(status_code=401, detail="Geçersiz anahtar! Lütfen tekrar giriş yapın.")
 
     # 1. Kullanıcı kontrolü
     db_user = db.query(User).filter(User.username == username).first()
