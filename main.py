@@ -146,7 +146,7 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
 @app.post("/upload-csv")    
 async def upload_file(
     background_tasks: BackgroundTasks,
-    token:str
+    token:str,
     username: str = Form(...), 
     file: UploadFile = File(...), 
     db: Session = Depends(get_db)
