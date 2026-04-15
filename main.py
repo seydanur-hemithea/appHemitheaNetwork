@@ -28,8 +28,6 @@ if not hasattr(bcrypt, "__about__"):
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL)
 
-SECRET_KEY = "Hemithea_Gizli_MuhuR_2026" 
-ALGORITHM = "HS256"
 
 # Token Üretme Fonksiyonu
 def create_access_token(data: dict):
