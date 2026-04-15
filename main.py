@@ -16,8 +16,8 @@ from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
-
-
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("JWT_ALGORITHM")
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Passlib'in bcrypt hatasını çözmek için küçük bir yama
