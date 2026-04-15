@@ -15,17 +15,15 @@ from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
 
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+
 # Passlib'in bcrypt hatasını çözmek için küçük bir yama
 if not hasattr(bcrypt, "__about__"):
     bcrypt.__about__ = type('About', (), {'__version__': bcrypt.__version__})
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-db_path = os.path.join(BASE_DIR, "hemithea.db")
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, 
-    connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL)
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
