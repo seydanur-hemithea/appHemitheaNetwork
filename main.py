@@ -136,7 +136,13 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
     
     # 3. Giriş başarılıysa Token üret
     access_token = create_access_token(data={"sub": db_user.username})
-    return {"access_token": access_token, "token_type": "bearer", "user_id": db_user.id}
+   
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer", 
+        "user_id": db_user.id,
+        "username": db_user.username  # <--- Bunu ekle ki Android 'null' demesin!
+    }
 async def upload_file(
     background_tasks: BackgroundTasks,
     username: str = Form(...), 
