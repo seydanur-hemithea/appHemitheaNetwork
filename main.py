@@ -143,19 +143,19 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
         "user_id": db_user.id,
         "username": db_user.username  # <--- Bunu ekle ki Android 'null' demesin!
     }
-@app.post("/upload-csv")    
+@app.post("/upload-csv")
 async def upload_file(
     background_tasks: BackgroundTasks,
-    token:str,
-    username: str = Form(...), 
-    file: UploadFile = File(...), 
+    token: str,
+    username: str = Form(...),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
+    
     try:
-            jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        except:
-            raise HTTPException(status_code=401, detail="Geçersiz anahtar! Lütfen tekrar giriş yapın.")
-
+        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except:
+        raise HTTPException(status_code=401, detail="Geçersiz anahtar! Lütfen tekrar giriş yapın.")
     # 1. Kullanıcı kontrolü
     db_user = db.query(User).filter(User.username == username).first()
     if not db_user:
