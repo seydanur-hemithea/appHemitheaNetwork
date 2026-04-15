@@ -14,6 +14,8 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
+from jose import JWTError, jwt
+
 
 
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
@@ -25,6 +27,13 @@ if not hasattr(bcrypt, "__about__"):
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL)
+
+SECRET_KEY = "Hemithea_Gizli_MuhuR_2026" 
+ALGORITHM = "HS256"
+
+# Token Üretme Fonksiyonu
+def create_access_token(data: dict):
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -117,17 +126,19 @@ def register(username: str = Form(...), password: str = Form(...), db: Session =
 @app.post("/login")
 def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.username == username).first()
-    if not db_user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    # Giriş şifresini de aynı byte kuralıyla temizle
-    safe_login_password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
     
+    # 1. Kullanıcı var mı kontrol et
+    if not db_user:
+        raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
+
+    # 2. Şifreyi doğrula (Güvenli 72 byte kuralıyla)
+    safe_login_password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
     if not pwd_context.verify(safe_login_password, db_user.hashed_password):
-        raise HTTPException(status_code=401, detail="Incorrect password")
-        
-    return {"user_id": db_user.id, "username": db_user.username}
-@app.post("/upload-csv")
+        raise HTTPException(status_code=401, detail="Hatalı şifre")
+    
+    # 3. Giriş başarılıysa Token üret
+    access_token = create_access_token(data={"sub": db_user.username})
+    return {"access_token": access_token, "token_type": "bearer", "user_id": db_user.id}
 async def upload_file(
     background_tasks: BackgroundTasks,
     username: str = Form(...), 
@@ -179,17 +190,18 @@ def save_analysis(analysis_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success", "message": "Analiz kalıcı olarak kaydedildi."}
 
-@app.get("/my-analyses/{username}")
-def get_user_analyses(username: str, db: Session = Depends(get_db)):
-    # Önce kullanıcıyı buluyoruz
-    db_user = db.query(User).filter(User.username == username).first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
-    
-    # Kullanıcının ID'sine göre analizlerini getiriyoruz
-    analyses = db.query(Analysis).filter(Analysis.user_id == db_user.id).all()
-    return analyses
-
+@app.get("/my-analyses")
+def get_user_analyses(token: str, db: Session = Depends(get_db)):
+    try:
+        # Token'ı çöz ve içindeki kullanıcıyı bul
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        
+        db_user = db.query(User).filter(User.username == username).first()
+        analyses = db.query(Analysis).filter(Analysis.user_id == db_user.id).all()
+        return analyses
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Geçersiz anahtar! Lütfen giriş yapın.")
 @app.get("/")
 def home():
     # Sadece sistemin durumu hakkında bilgi verir
@@ -198,6 +210,8 @@ def home():
         "status": "active",
         "environment": "production"
     }
+
+
     
 if __name__ == "__main__":
     # Render'ın verdiği portu al, eğer yoksa (lokaldeyken) 8000 kullan
