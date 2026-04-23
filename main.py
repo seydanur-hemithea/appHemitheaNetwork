@@ -222,6 +222,38 @@ def home():
         "environment": "production"
     }
 
+@app.delete("/delete-account")
+def delete_account(token: str, db: Session = Depends(get_db)):
+    # 1. Token doğrulaması
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        current_user = db.query(User).filter(User.username == username).first()
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Geçersiz token!")
+
+    if not current_user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+
+    # 2. Analiz dosyalarını diskten temizle
+    analyses = db.query(Analysis).filter(Analysis.user_id == current_user.id).all()
+    for analysis in analyses:
+        file_path = os.path.join(UPLOAD_DIR, analysis.file_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        db.delete(analysis)
+
+    # 3. Kullanıcı klasörünü temizle
+    user_folder = os.path.join(UPLOAD_DIR, username)
+    if os.path.exists(user_folder):
+        shutil.rmtree(user_folder)
+
+    # 4. Kullanıcıyı veritabanından sil
+    db.delete(current_user)
+    db.commit()
+
+    return {"status": "success", "message": "Hesabınız ve tüm verileriniz silindi."}
+
 
     
 if __name__ == "__main__":
