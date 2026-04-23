@@ -8,6 +8,8 @@ import bcrypt
 import psycopg2
 import asyncio
 
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import relationship
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -50,11 +52,12 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+    analyses = relationship("Analysis", backref="user", cascade="all, delete-orphan")
 
 class Analysis(Base):
     __tablename__ = "analyses"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     file_name = Column(String)
     is_saved = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
