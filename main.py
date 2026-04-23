@@ -6,6 +6,7 @@ from typing import List
 import uvicorn
 import bcrypt
 import psycopg2
+import asyncio
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,9 +69,10 @@ def get_db():
     finally:
         db.close()
 
-def delete_expired_file(file_path: str, analysis_id: int):
-    """3 saat bekler ve eğer analiz kaydedilmemişse dosyayı siler."""
-    time.sleep(10800) # 3 saat (10800 saniye)
+async def delete_expired_file(file_path: str, analysis_id: int):
+    # 3 saat bekle ama bloklama yok
+    await asyncio.sleep(10800)  
+    
     db = SessionLocal()
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
     
