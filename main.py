@@ -256,4 +256,4 @@ def delete_account(token: str, db: Session = Depends(get_db)):
 
 
     
-gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app
+
