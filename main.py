@@ -256,9 +256,4 @@ def delete_account(token: str, db: Session = Depends(get_db)):
 
 
     
-if __name__ == "__main__":
-    # Render'ın verdiği portu al, eğer yoksa (lokaldeyken) 8000 kullan
-    port = int(os.environ.get("PORT", 8000))
-    
-    # Host mutlaka "0.0.0.0" olmalı, yoksa dış dünyadan erişilemez
-    uvicorn.run(app, host="0.0.0.0", port=port)
+gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app
