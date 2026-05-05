@@ -250,7 +250,7 @@ async def process_pdf_analysis(
             """
 
             response = GEMINI_CLIENT.models.generate_content(
-                model="gemini-2.0-flash", # En hızlı ve güncel model
+                model="gemini-2.5-flash", # En hızlı ve güncel model
                 contents=prompt
             )
             
