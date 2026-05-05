@@ -1,12 +1,19 @@
+# Mevcut kütüphanelerin
 fastapi
-uvicorn
+uvicorn[standard]
 python-multipart
 sqlalchemy
 passlib[bcrypt]
 bcrypt==4.0.1
-psycopg2
 psycopg2-binary
 python-jose[cryptography]
 gunicorn
 
+# --- PDF İşleme İçin Şart (fitz hatası almamak için) ---
+pymupdf
 
+# --- Gemini API (NLP Asistanındaki yeni yapı) ---
+google-genai
+
+# --- Veri Birleştirme (Ağ analizlerini weight'e göre toplamak için) ---
+pandas
