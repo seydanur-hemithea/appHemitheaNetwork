@@ -155,67 +155,14 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
         "user_id": db_user.id,
         "username": db_user.username  # <--- Bunu ekle ki Android 'null' demesin!
     }
+# --- 1. DÜNYA: MANUEL CSV YÜKLEME (Görselleştirme) ---
 @app.post("/upload-csv")
 async def upload_file(
-    background_tasks: BackgroundTasks,
     token: str,
     username: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    
-    try:
-        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except:
-        raise HTTPException(status_code=401, detail="Geçersiz anahtar! Lütfen tekrar giriş yapın.")
-    # 1. Kullanıcı kontrolü
-    db_user = db.query(User).filter(User.username == username).first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
-        
-    # 2. Kullanıcıya özel klasör yolu (Örn: uploads/seydanur)
-    user_folder = os.path.join(UPLOAD_DIR, username)
-    if not os.path.exists(user_folder):
-        os.makedirs(user_folder)
-
-    # 3. Sabit dosya ismi (Streamlit'in aradığı isim)
-    file_name = "network_data.csv"
-    file_path = os.path.join(user_folder, file_name)
-    
-    # Dosyayı kaydet (Üzerine yazar, böylece klasör şişmez)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    # 4. Veritabanı kaydı
-    new_analysis = Analysis(
-        user_id=db_user.id, 
-        file_name=f"{username}/{file_name}"
-    )
-    db.add(new_analysis)
-    db.commit()
-    db.refresh(new_analysis)
-    
-    # Arka plan görevi (3 saat sonra silme - istersen aktif kalabilir)
-    background_tasks.add_task(delete_expired_file, file_path, new_analysis.id)
-    
-    return {
-        "status": "success", 
-        "file_url": f"/uploads/{username}/{file_name}",
-        "analysis_id": new_analysis.id
-    }
-
-
-# --- GEMINI CLIENT TANIMLAMASI (API_KEY'i os.getenv ile alıyoruz) ---
-GEMINI_CLIENT = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-@app.post("/upload-pdf")
-async def process_pdf_analysis(
-    token: str,
-    username: str = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    # 1. Token ve Kullanıcı Kontrolü (Senin mevcut mantığınla aynı)
     try:
         jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except:
@@ -225,81 +172,79 @@ async def process_pdf_analysis(
     if not db_user:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
 
-    # 2. Dosyayı Geçici Olarak Kaydet
+    # HAFIZA TEMİZLİĞİ: Kullanıcı klasörünü sıfırlıyoruz
     user_folder = os.path.join(UPLOAD_DIR, username)
-    if not os.path.exists(user_folder): os.makedirs(user_folder)
+    if os.path.exists(user_folder):
+        shutil.rmtree(user_folder)
+    os.makedirs(user_folder)
+
+    # İsim kararına sadık kalıyoruz: network_data.csv
+    file_name = "network_data.csv"
+    file_path = os.path.join(user_folder, file_name)
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    return {"status": "success", "file_url": f"/uploads/{username}/{file_name}"}
+
+
+# --- GEMINI CLIENT TANIMLAMASI (API_KEY'i os.getenv ile alıyoruz) ---
+GEMINI_CLIENT = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# --- 2. DÜNYA: PDF ANALİZİ (Gemini ile Veri Madenciliği) ---
+@app.post("/upload-pdf")
+async def process_pdf_analysis(
+    token: str,
+    username: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except:
+        raise HTTPException(status_code=401, detail="Geçersiz anahtar!")
+
+    db_user = db.query(User).filter(User.username == username).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
+
+    # HAFIZA TEMİZLİĞİ: Eski analizleri siliyoruz
+    user_folder = os.path.join(UPLOAD_DIR, username)
+    if os.path.exists(user_folder):
+        shutil.rmtree(user_folder)
+    os.makedirs(user_folder)
     
     pdf_path = os.path.join(user_folder, "current_analysis.pdf")
     with open(pdf_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # 3. --- HNA CORE ENGINE BAŞLIYOR (Senin müthiş mantığın) ---
     try:
         doc = fitz.open(pdf_path)
         all_network_data = []
-        step = 20  # Sayfa atlama aralığı
-        max_pages = min(100, len(doc)) # İlk 100 sayfa sınırı
+        # Gemini işlemleri... (Senin mevcut döngün burada çalışacak)
 
-        for i in range(0, max_pages, step):
-            text = ""
-            for page_num in range(i, min(i + step, max_pages)):
-                text += doc[page_num].get_text()
-            
-            prompt = f"""
-Metindeki karakterleri sosyal ağ analizi için ayıkla.
-YALNIZCA şu formatta geçerli bir JSON listesi döndür:
-[ {{"source": "Karakter A", "target": "Karakter B", "weight": 1}} ]
-JSON dışında hiçbir açıklama veya metin ekleme.
-Metin: {text}
-"""
-
-
-            response = GEMINI_CLIENT.models.generate_content(
-                model="gemini-2.5-flash", # En hızlı ve güncel model
-                contents=prompt
-            )
-            
-            # JSON Temizleme
-            raw_json = response.text.strip()
-            if "```" in raw_json:
-                raw_json = raw_json.split("```")[1].replace("json", "").strip()
-            
-            try:
-                batch_data = json.loads(raw_json)
-                all_network_data.extend(batch_data)
-            except:
-                continue 
+        # ... (Gemini döngüsü bittiğinde) ...
 
         doc.close()
+        os.remove(pdf_path) # Analiz bitti, ağır PDF'i siliyoruz!
 
-        # 4. Verileri DataFrame ile Birleştir ve CSV Olarak Kaydet
         df = pd.DataFrame(all_network_data)
         if not df.empty:
             df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
         
-        # Sonuç CSV'sini Streamlit'in göreceği yere yazıyoruz
-        result_csv_name = "hna_total_network.csv"
+        # İsim kararına sadık kalıyoruz: hna_data.csv
+        result_csv_name = "hna_data.csv"
         result_csv_path = os.path.join(user_folder, result_csv_name)
         df.to_csv(result_csv_path, index=False)
 
-        # 5. Veritabanına Analiz Kaydı
-        new_analysis = Analysis(
-            user_id=db_user.id, 
-            file_name=f"{username}/{result_csv_name}"
-        )
-        db.add(new_analysis)
-        db.commit()
-
         return {
             "status": "success",
-            "message": "Derin analiz tamamlandı, ağ haritası oluşturuldu.",
-            "analysis_id": new_analysis.id,
-            "data_preview": df.head(5).to_dict(orient="records") # Android'e küçük bir önizleme
+            "message": "PDF Verisi hna_data.csv olarak hazırlandı.",
+            "file_url": f"/uploads/{username}/{result_csv_name}"
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analiz motoru hatası: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=str(e))
 @app.post("/save-analysis/{analysis_id}")
 def save_analysis(analysis_id: int, db: Session = Depends(get_db)):
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
