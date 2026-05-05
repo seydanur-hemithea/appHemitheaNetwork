@@ -18,6 +18,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 from jose import JWTError, jwt
+import fitz  # PyMuPDF 
+from google import genai # NLP asistanındaki yeni kütüphane
+
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("JWT_ALGORITHM")
@@ -197,6 +200,101 @@ async def upload_file(
         "file_url": f"/uploads/{username}/{file_name}",
         "analysis_id": new_analysis.id
     }
+
+
+# --- GEMINI CLIENT TANIMLAMASI (API_KEY'i os.getenv ile alıyoruz) ---
+GEMINI_CLIENT = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+@app.post("/upload-pdf")
+async def process_pdf_analysis(
+    token: str,
+    username: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    # 1. Token ve Kullanıcı Kontrolü (Senin mevcut mantığınla aynı)
+    try:
+        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except:
+        raise HTTPException(status_code=401, detail="Geçersiz anahtar!")
+
+    db_user = db.query(User).filter(User.username == username).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
+
+    # 2. Dosyayı Geçici Olarak Kaydet
+    user_folder = os.path.join(UPLOAD_DIR, username)
+    if not os.path.exists(user_folder): os.makedirs(user_folder)
+    
+    pdf_path = os.path.join(user_folder, "current_analysis.pdf")
+    with open(pdf_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # 3. --- HNA CORE ENGINE BAŞLIYOR (Senin müthiş mantığın) ---
+    try:
+        doc = fitz.open(pdf_path)
+        all_network_data = []
+        step = 20  # Sayfa atlama aralığı
+        max_pages = min(100, len(doc)) # İlk 100 sayfa sınırı
+
+        for i in range(0, max_pages, step):
+            text = ""
+            for page_num in range(i, min(i + step, max_pages)):
+                text += doc[page_num].get_text()
+            
+            prompt = f"""
+            Bu metindeki karakterleri ve aralarındaki sosyal ağ ilişkilerini analiz et.
+            Sadece JSON formatında bir liste döndür. Başka metin ekleme.
+            Format: [ {{"source": "İsim 1", "target": "İsim 2", "weight": 3}} ]
+            Metin Parçası: {text}
+            """
+
+            response = GEMINI_CLIENT.models.generate_content(
+                model="gemini-2.0-flash", # En hızlı ve güncel model
+                contents=prompt
+            )
+            
+            # JSON Temizleme
+            raw_json = response.text.strip()
+            if "```" in raw_json:
+                raw_json = raw_json.split("```")[1].replace("json", "").strip()
+            
+            try:
+                batch_data = json.loads(raw_json)
+                all_network_data.extend(batch_data)
+            except:
+                continue 
+
+        doc.close()
+
+        # 4. Verileri DataFrame ile Birleştir ve CSV Olarak Kaydet
+        df = pd.DataFrame(all_network_data)
+        if not df.empty:
+            df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
+        
+        # Sonuç CSV'sini Streamlit'in göreceği yere yazıyoruz
+        result_csv_name = "network_data.csv"
+        result_csv_path = os.path.join(user_folder, result_csv_name)
+        df.to_csv(result_csv_path, index=False)
+
+        # 5. Veritabanına Analiz Kaydı
+        new_analysis = Analysis(
+            user_id=db_user.id, 
+            file_name=f"{username}/{result_csv_name}"
+        )
+        db.add(new_analysis)
+        db.commit()
+
+        return {
+            "status": "success",
+            "message": "Derin analiz tamamlandı, ağ haritası oluşturuldu.",
+            "analysis_id": new_analysis.id,
+            "data_preview": df.head(5).to_dict(orient="records") # Android'e küçük bir önizleme
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analiz motoru hatası: {str(e)}")
+
 @app.post("/save-analysis/{analysis_id}")
 def save_analysis(analysis_id: int, db: Session = Depends(get_db)):
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
