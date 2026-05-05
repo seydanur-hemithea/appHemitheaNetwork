@@ -243,11 +243,13 @@ async def process_pdf_analysis(
                 text += doc[page_num].get_text()
             
             prompt = f"""
-            Bu metindeki karakterleri ve aralarındaki sosyal ağ ilişkilerini analiz et.
-            Sadece JSON formatında bir liste döndür. Başka metin ekleme.
-            Format: [ {{"source": "İsim 1", "target": "İsim 2", "weight": 3}} ]
-            Metin Parçası: {text}
-            """
+Metindeki karakterleri sosyal ağ analizi için ayıkla.
+YALNIZCA şu formatta geçerli bir JSON listesi döndür:
+[ {{"source": "Karakter A", "target": "Karakter B", "weight": 1}} ]
+JSON dışında hiçbir açıklama veya metin ekleme.
+Metin: {text}
+"""
+
 
             response = GEMINI_CLIENT.models.generate_content(
                 model="gemini-2.5-flash", # En hızlı ve güncel model
