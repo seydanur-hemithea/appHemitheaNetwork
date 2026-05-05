@@ -278,7 +278,7 @@ Metin: {text}
             df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
         
         # Sonuç CSV'sini Streamlit'in göreceği yere yazıyoruz
-        result_csv_name = "network_data.csv"
+        result_csv_name = "hna_total_network.csv"
         result_csv_path = os.path.join(user_folder, result_csv_name)
         df.to_csv(result_csv_path, index=False)
 
