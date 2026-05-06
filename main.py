@@ -84,7 +84,7 @@ GEMINI_CLIENT = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL_NAME = "gemini-2.0-flash"
 
 # --- 4. FASTAPI UYGULAMASI ---
-app = FastAPI(title="Hemithea Analytics API", version="2.5.1")
+app = FastAPI(title="Hemithea Analytics API", version="2.5.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -132,6 +132,36 @@ async def get_analysis_file(username: str, filename: str, token: str):
     if not os.path.exists(file_path): raise HTTPException(status_code=404)
     return FileResponse(file_path)
 
+# --- CSV YÜKLEME ENDPOINT'İ (Hata Veren Kısım Buydu) ---
+@app.post("/upload-csv")
+async def upload_csv(
+    token: str,
+    username: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    verify_token(token)
+    db_user = db.query(User).filter(User.username == username).first()
+    if not db_user: raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
+
+    user_folder = os.path.join(UPLOAD_DIR, username)
+    if not os.path.exists(user_folder):
+        os.makedirs(user_folder)
+
+    # Dosyayı "hna_data.csv" olarak kaydediyoruz ki Streamlit standart bulsun
+    file_name = "hna_data.csv"
+    file_path = os.path.join(user_folder, file_name)
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Analiz kaydını DB'ye işle (CSV yüklendiğinde de listede görünsün)
+    new_analysis = Analysis(user_id=db_user.id, file_name=file_name)
+    db.add(new_analysis)
+    db.commit()
+
+    return {"status": "success", "file_url": f"/get-analysis/{username}/{file_name}"}
+
 @app.post("/upload-pdf")
 async def process_pdf_analysis(
     token: str,
@@ -139,7 +169,6 @@ async def process_pdf_analysis(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    # Ana token kontrolü
     verify_token(token)
     db_user = db.query(User).filter(User.username == username).first()
     if not db_user: raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
@@ -171,7 +200,6 @@ async def process_pdf_analysis(
                     contents=text
                 )
                 try:
-                    # JSON Temizleme
                     raw_text = response.text.strip()
                     if "```json" in raw_text:
                         raw_text = raw_text.split("```json")[1].split("```")[0].strip()
@@ -181,8 +209,7 @@ async def process_pdf_analysis(
                     page_data = json.loads(raw_text)
                     if isinstance(page_data, list):
                         all_network_data.extend(page_data)
-                except Exception as e:
-                    print(f"JSON Ayrıştırma Hatası: {e}")
+                except:
                     continue
 
         doc.close()
@@ -191,7 +218,6 @@ async def process_pdf_analysis(
         if not all_network_data:
             return {"status": "error", "message": "Analizden veri çıkmadı."}
 
-        # Veriyi grupla ve kaydet
         df = pd.DataFrame(all_network_data)
         df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
         
@@ -199,7 +225,6 @@ async def process_pdf_analysis(
         result_csv_path = os.path.join(user_folder, result_csv_name)
         df.to_csv(result_csv_path, index=False)
 
-        # Analiz kaydını DB'ye işle
         new_analysis = Analysis(user_id=db_user.id, file_name=result_csv_name)
         db.add(new_analysis)
         db.commit()
