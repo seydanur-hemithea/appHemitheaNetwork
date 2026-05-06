@@ -195,16 +195,16 @@ async def process_pdf_analysis(
     with open(pdf_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-          try:
-            doc = fitz.open(pdf_path)
-            all_network_data = []
-    
-            # Gemini'nin veri formatını anlaması için SYSTEM PROMPT
-            system_instruction = """
-            Sen bir ağ analiz uzmanısın. Metindeki karakterleri/kurumları ve aralarındaki 
-            ilişkileri bulup 'source', 'target' ve 'weight' (ilişki gücü) şeklinde 
-            JSON formatında döndürmelisin. Sadece JSON döndür.
-            """
+  try:
+    doc = fitz.open(pdf_path)
+    all_network_data = []
+
+    # Gemini'nin veri formatını anlaması için SYSTEM PROMPT
+    system_instruction = """
+    Sen bir ağ analiz uzmanısın. Metindeki karakterleri/kurumları ve aralarındaki 
+    ilişkileri bulup 'source', 'target' ve 'weight' (ilişki gücü) şeklinde 
+    JSON formatında döndürmelisin. Sadece JSON döndür.
+    """
 
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
