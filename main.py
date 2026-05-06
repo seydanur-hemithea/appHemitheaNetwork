@@ -86,7 +86,7 @@ GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 MODEL_NAME = "gemini-2.0-flash"
 
 # --- 4. FASTAPI UYGULAMASI ---
-app = FastAPI(title="Hemithea Analytics API", version="2.5.4")
+app = FastAPI(title="Hemithea Analytics API", version="2.5.5")
 
 app.add_middleware(
     CORSMiddleware,
@@ -99,6 +99,8 @@ UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
+# ÖNEMLİ: Streamlit doğrudan /uploads/... şeklinde arama yapıyorsa burası kurtarır
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
 
 # --- 5. ENDPOINTLER ---
@@ -160,16 +162,18 @@ async def upload_csv(
             df_clean = df[['source', 'target', 'weight']].copy()
             df_clean['weight'] = pd.to_numeric(df_clean['weight'], errors='coerce').fillna(1)
             
-            final_name = "hna_data.csv"
-            final_path = os.path.join(user_folder, final_name)
-            df_clean.to_csv(final_path, index=False)
+            # Kritik Düzeltme: Hem hna_data hem network_data olarak kaydet
+            for name in ["hna_data.csv", "network_data.csv"]:
+                final_path = os.path.join(user_folder, name)
+                df_clean.to_csv(final_path, index=False)
             
-            new_analysis = Analysis(user_id=db_user.id, file_name=final_name)
+            new_analysis = Analysis(user_id=db_user.id, file_name="network_data.csv")
             db.add(new_analysis)
             db.commit()
             
             os.remove(temp_path)
-            return {"status": "success", "file_url": f"/get-analysis/{username}/{final_name}"}
+            # Logdaki 404'ü çözmek için URL'i network_data.csv olarak döndür
+            return {"status": "success", "file_url": f"/uploads/{username}/network_data.csv"}
         else:
             os.remove(temp_path)
             return {"status": "error", "message": "CSV en az 3 sütun içermeli."}
@@ -187,7 +191,7 @@ async def process_pdf_analysis(
     verify_token(token)
     
     if not GEMINI_CLIENT:
-        raise HTTPException(status_code=500, detail="Gemini API Anahtarı sunucuda eksik (GEMINI_API_KEY).")
+        raise HTTPException(status_code=500, detail="Gemini API Anahtarı sunucuda eksik.")
 
     db_user = db.query(User).filter(User.username == username).first()
     if not db_user: raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
@@ -203,7 +207,6 @@ async def process_pdf_analysis(
     try:
         doc = fitz.open(pdf_path)
         all_network_data = []
-
         system_instruction = "Sen bir ağ analiz uzmanısın. Metinden aktörleri ve ilişkileri bul. Sadece şu formatta JSON döndür: [{\"source\": \"A\", \"target\": \"B\", \"weight\": 1}]"
 
         for page in doc:
@@ -215,47 +218,40 @@ async def process_pdf_analysis(
                         config=types.GenerateContentConfig(system_instruction=system_instruction),
                         contents=text
                     )
-                    
                     raw_text = response.text.strip()
-                    # Markdown temizliği
                     if "```" in raw_text:
                         raw_text = raw_text.split("```")[1]
-                        if raw_text.startswith("json"):
-                            raw_text = raw_text[4:].strip()
+                        if raw_text.startswith("json"): raw_text = raw_text[4:].strip()
                         raw_text = raw_text.strip()
-
                     page_data = json.loads(raw_text)
-                    if isinstance(page_data, list):
-                        all_network_data.extend(page_data)
-                except Exception as inner_e:
-                    print(f"Sayfa işleme hatası: {inner_e}")
-                    continue
+                    if isinstance(page_data, list): all_network_data.extend(page_data)
+                except: continue
 
         doc.close()
         if os.path.exists(pdf_path): os.remove(pdf_path)
 
         if not all_network_data:
-            return {"status": "error", "message": "PDF içeriğinden analiz edilebilir veri çıkarılamadı."}
+            return {"status": "error", "message": "PDF'den veri çıkarılamadı."}
 
         df = pd.DataFrame(all_network_data)
-        # Sütunları standartlaştır (Küçük harf vs)
         df.columns = [c.lower() for c in df.columns]
         
         if 'source' in df.columns and 'target' in df.columns:
             if 'weight' not in df.columns: df['weight'] = 1
             df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
             
-            result_csv_name = "hna_data.csv"
-            result_csv_path = os.path.join(user_folder, result_csv_name)
-            df.to_csv(result_csv_path, index=False)
+            # PDF analizinden de network_data üretelim
+            result_name = "network_data.csv"
+            result_path = os.path.join(user_folder, result_name)
+            df.to_csv(result_path, index=False)
 
-            new_analysis = Analysis(user_id=db_user.id, file_name=result_csv_name)
+            new_analysis = Analysis(user_id=db_user.id, file_name=result_name)
             db.add(new_analysis)
             db.commit()
 
-            return {"status": "success", "file_url": f"/get-analysis/{username}/{result_csv_name}"}
+            return {"status": "success", "file_url": f"/uploads/{username}/{result_name}"}
         else:
-            return {"status": "error", "message": "Gemini uygun formatta veri üretmedi."}
+            return {"status": "error", "message": "Geçersiz veri formatı."}
 
     except Exception as e:
         if os.path.exists(pdf_path): os.remove(pdf_path)
