@@ -80,11 +80,13 @@ def verify_token(token: str):
     except JWTError:
         raise HTTPException(status_code=401, detail="Geçersiz anahtar.")
 
-GEMINI_CLIENT = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# API Key kontrolü
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 MODEL_NAME = "gemini-2.0-flash"
 
 # --- 4. FASTAPI UYGULAMASI ---
-app = FastAPI(title="Hemithea Analytics API", version="2.5.2")
+app = FastAPI(title="Hemithea Analytics API", version="2.5.4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -103,7 +105,7 @@ app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
 
 @app.get("/")
 def read_root():
-    return {"message": "Hemithea Engine Online"}
+    return {"message": "Hemithea Engine Online", "gemini_status": "configured" if GEMINI_CLIENT else "missing_key"}
 
 @app.post("/register")
 def register(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
@@ -132,7 +134,6 @@ async def get_analysis_file(username: str, filename: str, token: str):
     if not os.path.exists(file_path): raise HTTPException(status_code=404)
     return FileResponse(file_path)
 
-# --- CSV YÜKLEME ENDPOINT'İ (Hata Veren Kısım Buydu) ---
 @app.post("/upload-csv")
 async def upload_csv(
     token: str,
@@ -148,19 +149,33 @@ async def upload_csv(
     if not os.path.exists(user_folder):
         os.makedirs(user_folder)
 
-    # Dosyayı "hna_data.csv" olarak kaydediyoruz ki Streamlit standart bulsun
-    file_name = "hna_data.csv"
-    file_path = os.path.join(user_folder, file_name)
-    
-    with open(file_path, "wb") as buffer:
+    temp_path = os.path.join(user_folder, "temp_upload.csv")
+    with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    # Analiz kaydını DB'ye işle (CSV yüklendiğinde de listede görünsün)
-    new_analysis = Analysis(user_id=db_user.id, file_name=file_name)
-    db.add(new_analysis)
-    db.commit()
-
-    return {"status": "success", "file_url": f"/get-analysis/{username}/{file_name}"}
+    try:
+        df = pd.read_csv(temp_path)
+        if len(df.columns) >= 3:
+            df.columns = ['source', 'target', 'weight'] + list(df.columns[3:])
+            df_clean = df[['source', 'target', 'weight']].copy()
+            df_clean['weight'] = pd.to_numeric(df_clean['weight'], errors='coerce').fillna(1)
+            
+            final_name = "hna_data.csv"
+            final_path = os.path.join(user_folder, final_name)
+            df_clean.to_csv(final_path, index=False)
+            
+            new_analysis = Analysis(user_id=db_user.id, file_name=final_name)
+            db.add(new_analysis)
+            db.commit()
+            
+            os.remove(temp_path)
+            return {"status": "success", "file_url": f"/get-analysis/{username}/{final_name}"}
+        else:
+            os.remove(temp_path)
+            return {"status": "error", "message": "CSV en az 3 sütun içermeli."}
+    except Exception as e:
+        if os.path.exists(temp_path): os.remove(temp_path)
+        raise HTTPException(status_code=400, detail=f"CSV Hatası: {str(e)}")
 
 @app.post("/upload-pdf")
 async def process_pdf_analysis(
@@ -170,6 +185,10 @@ async def process_pdf_analysis(
     db: Session = Depends(get_db)
 ):
     verify_token(token)
+    
+    if not GEMINI_CLIENT:
+        raise HTTPException(status_code=500, detail="Gemini API Anahtarı sunucuda eksik (GEMINI_API_KEY).")
+
     db_user = db.query(User).filter(User.username == username).first()
     if not db_user: raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
 
@@ -185,58 +204,62 @@ async def process_pdf_analysis(
         doc = fitz.open(pdf_path)
         all_network_data = []
 
-        system_instruction = """
-        Sen bir ağ analiz uzmanısın. Metindeki karakterleri/kurumları ve aralarındaki 
-        ilişkileri bulup 'source', 'target' ve 'weight' şeklinde 
-        JSON formatında döndürmelisin. Sadece JSON döndür.
-        """
+        system_instruction = "Sen bir ağ analiz uzmanısın. Metinden aktörleri ve ilişkileri bul. Sadece şu formatta JSON döndür: [{\"source\": \"A\", \"target\": \"B\", \"weight\": 1}]"
 
         for page in doc:
             text = page.get_text()
             if text.strip():
-                response = GEMINI_CLIENT.models.generate_content(
-                    model=MODEL_NAME,
-                    config=types.GenerateContentConfig(system_instruction=system_instruction),
-                    contents=text
-                )
                 try:
-                    raw_text = response.text.strip()
-                    if "```json" in raw_text:
-                        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-                    elif "```" in raw_text:
-                        raw_text = raw_text.split("```")[1].split("```")[0].strip()
+                    response = GEMINI_CLIENT.models.generate_content(
+                        model=MODEL_NAME,
+                        config=types.GenerateContentConfig(system_instruction=system_instruction),
+                        contents=text
+                    )
                     
+                    raw_text = response.text.strip()
+                    # Markdown temizliği
+                    if "```" in raw_text:
+                        raw_text = raw_text.split("```")[1]
+                        if raw_text.startswith("json"):
+                            raw_text = raw_text[4:].strip()
+                        raw_text = raw_text.strip()
+
                     page_data = json.loads(raw_text)
                     if isinstance(page_data, list):
                         all_network_data.extend(page_data)
-                except:
+                except Exception as inner_e:
+                    print(f"Sayfa işleme hatası: {inner_e}")
                     continue
 
         doc.close()
-        os.remove(pdf_path)
+        if os.path.exists(pdf_path): os.remove(pdf_path)
 
         if not all_network_data:
-            return {"status": "error", "message": "Analizden veri çıkmadı."}
+            return {"status": "error", "message": "PDF içeriğinden analiz edilebilir veri çıkarılamadı."}
 
         df = pd.DataFrame(all_network_data)
-        df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
+        # Sütunları standartlaştır (Küçük harf vs)
+        df.columns = [c.lower() for c in df.columns]
         
-        result_csv_name = "hna_data.csv"
-        result_csv_path = os.path.join(user_folder, result_csv_name)
-        df.to_csv(result_csv_path, index=False)
+        if 'source' in df.columns and 'target' in df.columns:
+            if 'weight' not in df.columns: df['weight'] = 1
+            df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
+            
+            result_csv_name = "hna_data.csv"
+            result_csv_path = os.path.join(user_folder, result_csv_name)
+            df.to_csv(result_csv_path, index=False)
 
-        new_analysis = Analysis(user_id=db_user.id, file_name=result_csv_name)
-        db.add(new_analysis)
-        db.commit()
+            new_analysis = Analysis(user_id=db_user.id, file_name=result_csv_name)
+            db.add(new_analysis)
+            db.commit()
 
-        return {
-            "status": "success",
-            "message": "Analiz tamamlandı.",
-            "file_url": f"/get-analysis/{username}/{result_csv_name}"
-        }
+            return {"status": "success", "file_url": f"/get-analysis/{username}/{result_csv_name}"}
+        else:
+            return {"status": "error", "message": "Gemini uygun formatta veri üretmedi."}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analiz Hatası: {str(e)}")
+        if os.path.exists(pdf_path): os.remove(pdf_path)
+        raise HTTPException(status_code=500, detail=f"Sistem Hatası: {str(e)}")
 
 @app.get("/my-analyses")
 def get_user_analyses(token: str, db: Session = Depends(get_db)):
