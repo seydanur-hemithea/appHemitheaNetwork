@@ -25,7 +25,7 @@ from google import genai
 from google.genai import types
 
 # --- 1. VERİTABANI AYARLARI ---
-SECRET_KEY = os.getenv("SECRET_KEY", "Hemithea_Super_Secret_Key_2024")
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
