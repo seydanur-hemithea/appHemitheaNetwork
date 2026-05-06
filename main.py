@@ -115,6 +115,10 @@ def login_user(username: str = Form(...), password: str = Form(...), db: Session
     token = create_access_token(data={"sub": user.username})
     return {"access_token": token, "username": user.username, "user_id": user.id}
 
+out_path = os.path.join(user_path, "hna_data.csv")
+if os.path.exists(out_path):
+    os.remove(out_path) # Yeni analiz başlarken eskiyi temizle
+
 @app.post("/upload-csv")
 async def upload_manual_csv(token: str, username: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
     verify_token(token)
