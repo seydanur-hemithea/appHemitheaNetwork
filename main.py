@@ -57,7 +57,7 @@ class Analysis(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     file_name = Column(String)
-    is_saved = Column(Boolean, default=False)
+    analysis_type = Column(String) # "pdf_to_hna" veya "manual_csv"
     created_at = Column(DateTime, default=datetime.utcnow)
 
 Base.metadata.create_all(bind=engine)
@@ -80,13 +80,12 @@ def verify_token(token: str):
     except JWTError:
         raise HTTPException(status_code=401, detail="Geçersiz anahtar.")
 
-# API Key kontrolü
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 MODEL_NAME = "gemini-2.0-flash"
 
 # --- 4. FASTAPI UYGULAMASI ---
-app = FastAPI(title="Hemithea Analytics API", version="2.5.5")
+app = FastAPI(title="Hemithea Analytics API", version="2.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -99,7 +98,7 @@ UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-# ÖNEMLİ: Streamlit doğrudan /uploads/... şeklinde arama yapıyorsa burası kurtarır
+# Statik dosya erişimleri
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
 
@@ -107,7 +106,7 @@ app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
 
 @app.get("/")
 def read_root():
-    return {"message": "Hemithea Engine Online", "gemini_status": "configured" if GEMINI_CLIENT else "missing_key"}
+    return {"message": "Hemithea Engine Online", "status": "ready"}
 
 @app.post("/register")
 def register(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
@@ -136,6 +135,7 @@ async def get_analysis_file(username: str, filename: str, token: str):
     if not os.path.exists(file_path): raise HTTPException(status_code=404)
     return FileResponse(file_path)
 
+# --- YAKLAŞIM 1: CSV YÜKLEME -> Doğrudan Ağ Analizi (network_data.csv) ---
 @app.post("/upload-csv")
 async def upload_csv(
     token: str,
@@ -148,39 +148,22 @@ async def upload_csv(
     if not db_user: raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
 
     user_folder = os.path.join(UPLOAD_DIR, username)
-    if not os.path.exists(user_folder):
-        os.makedirs(user_folder)
+    if not os.path.exists(user_folder): os.makedirs(user_folder)
 
-    temp_path = os.path.join(user_folder, "temp_upload.csv")
-    with open(temp_path, "wb") as buffer:
+    # Doğrudan ağ analizi için network_data.csv olarak kaydedilir
+    file_name = "network_data.csv"
+    file_path = os.path.join(user_folder, file_name)
+    
+    with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    try:
-        df = pd.read_csv(temp_path)
-        if len(df.columns) >= 3:
-            df.columns = ['source', 'target', 'weight'] + list(df.columns[3:])
-            df_clean = df[['source', 'target', 'weight']].copy()
-            df_clean['weight'] = pd.to_numeric(df_clean['weight'], errors='coerce').fillna(1)
-            
-            # Kritik Düzeltme: Hem hna_data hem network_data olarak kaydet
-            for name in ["hna_data.csv", "network_data.csv"]:
-                final_path = os.path.join(user_folder, name)
-                df_clean.to_csv(final_path, index=False)
-            
-            new_analysis = Analysis(user_id=db_user.id, file_name="network_data.csv")
-            db.add(new_analysis)
-            db.commit()
-            
-            os.remove(temp_path)
-            # Logdaki 404'ü çözmek için URL'i network_data.csv olarak döndür
-            return {"status": "success", "file_url": f"/uploads/{username}/network_data.csv"}
-        else:
-            os.remove(temp_path)
-            return {"status": "error", "message": "CSV en az 3 sütun içermeli."}
-    except Exception as e:
-        if os.path.exists(temp_path): os.remove(temp_path)
-        raise HTTPException(status_code=400, detail=f"CSV Hatası: {str(e)}")
+    new_analysis = Analysis(user_id=db_user.id, file_name=file_name, analysis_type="manual_csv")
+    db.add(new_analysis)
+    db.commit()
 
+    return {"status": "success", "file_url": f"/uploads/{username}/{file_name}"}
+
+# --- YAKLAŞIM 2: PDF YÜKLEME -> HNA Verisi Üretme (hna_data.csv) ---
 @app.post("/upload-pdf")
 async def process_pdf_analysis(
     token: str,
@@ -189,16 +172,13 @@ async def process_pdf_analysis(
     db: Session = Depends(get_db)
 ):
     verify_token(token)
-    
-    if not GEMINI_CLIENT:
-        raise HTTPException(status_code=500, detail="Gemini API Anahtarı sunucuda eksik.")
+    if not GEMINI_CLIENT: raise HTTPException(status_code=500, detail="Gemini API Anahtarı eksik.")
 
     db_user = db.query(User).filter(User.username == username).first()
     if not db_user: raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
 
     user_folder = os.path.join(UPLOAD_DIR, username)
-    if os.path.exists(user_folder): shutil.rmtree(user_folder)
-    os.makedirs(user_folder)
+    if not os.path.exists(user_folder): os.makedirs(user_folder)
     
     pdf_path = os.path.join(user_folder, "current_analysis.pdf")
     with open(pdf_path, "wb") as buffer:
@@ -207,7 +187,7 @@ async def process_pdf_analysis(
     try:
         doc = fitz.open(pdf_path)
         all_network_data = []
-        system_instruction = "Sen bir ağ analiz uzmanısın. Metinden aktörleri ve ilişkileri bul. Sadece şu formatta JSON döndür: [{\"source\": \"A\", \"target\": \"B\", \"weight\": 1}]"
+        system_instruction = "Sen bir hiyerarşik ağ analiz uzmanısın. Metinden aktörleri ve ilişkileri bul. Sadece şu formatta JSON döndür: [{\"source\": \"A\", \"target\": \"B\", \"weight\": 1}]"
 
         for page in doc:
             text = page.get_text()
@@ -231,7 +211,7 @@ async def process_pdf_analysis(
         if os.path.exists(pdf_path): os.remove(pdf_path)
 
         if not all_network_data:
-            return {"status": "error", "message": "PDF'den veri çıkarılamadı."}
+            return {"status": "error", "message": "Analiz verisi çıkarılamadı."}
 
         df = pd.DataFrame(all_network_data)
         df.columns = [c.lower() for c in df.columns]
@@ -240,18 +220,18 @@ async def process_pdf_analysis(
             if 'weight' not in df.columns: df['weight'] = 1
             df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
             
-            # PDF analizinden de network_data üretelim
-            result_name = "network_data.csv"
+            # PDF analiz sonucu her zaman hna_data.csv olur
+            result_name = "hna_data.csv"
             result_path = os.path.join(user_folder, result_name)
             df.to_csv(result_path, index=False)
 
-            new_analysis = Analysis(user_id=db_user.id, file_name=result_name)
+            new_analysis = Analysis(user_id=db_user.id, file_name=result_name, analysis_type="pdf_to_hna")
             db.add(new_analysis)
             db.commit()
 
             return {"status": "success", "file_url": f"/uploads/{username}/{result_name}"}
         else:
-            return {"status": "error", "message": "Geçersiz veri formatı."}
+            return {"status": "error", "message": "Geçersiz veri formatı üretildi."}
 
     except Exception as e:
         if os.path.exists(pdf_path): os.remove(pdf_path)
@@ -262,15 +242,6 @@ def get_user_analyses(token: str, db: Session = Depends(get_db)):
     uname = verify_token(token)
     db_user = db.query(User).filter(User.username == uname).first()
     return db.query(Analysis).filter(Analysis.user_id == db_user.id).all()
-
-@app.delete("/delete-account")
-def delete_account(token: str, db: Session = Depends(get_db)):
-    uname = verify_token(token)
-    db_user = db.query(User).filter(User.username == uname).first()
-    shutil.rmtree(os.path.join(UPLOAD_DIR, uname), ignore_errors=True)
-    db.delete(db_user)
-    db.commit()
-    return {"status": "success"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
