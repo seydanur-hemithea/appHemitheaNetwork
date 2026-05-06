@@ -83,7 +83,7 @@ def verify_token(token: str):
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
 app = FastAPI(title="Hemithea Engine", version="2.6.5")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
