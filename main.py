@@ -144,12 +144,15 @@ async def upload_manual_csv(token: str, username: str = Form(...), file: UploadF
 @app.post("/upload-pdf")
 async def upload_and_process_pdf(token: str, username: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
     verify_token(token)
-    if not GEMINI_CLIENT: raise HTTPException(status_code=500, detail="Gemini API Key eksik.")
-    db_user = db.query(User).filter(User.username == username).first()
-    
     user_path = os.path.join(UPLOAD_DIR, username)
     if not os.path.exists(user_path): os.makedirs(user_path)
     
+    # KESİN ÇÖZÜM: Dosya ismini sabitliyoruz ve en başta varsa siliyoruz
+    out_path = os.path.join(user_path, "hna_data.csv")
+    if os.path.exists(out_path):
+        os.remove(out_path)
+        print(f"DEBUG: Eski {out_path} silindi.")
+
     temp_pdf = os.path.join(user_path, "temp_proc.pdf")
     with open(temp_pdf, "wb") as b: 
         shutil.copyfileobj(file.file, b)
@@ -157,47 +160,47 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
     try:
         doc = fitz.open(temp_pdf)
         extracted_data = []
-        inst = "Sadece JSON döndür: [{\"source\":\"A\", \"target\":\"B\", \"weight\":1}]"
+        print(f"DEBUG: PDF açıldı, sayfa sayısı: {len(doc)}")
         
-        for page in doc:
+        for i, page in enumerate(doc):
             txt = page.get_text()
             if txt.strip():
+                print(f"DEBUG: Sayfa {i+1} Gemini'ye gönderiliyor...")
+                # Gemini çağrısı
                 res = GEMINI_CLIENT.models.generate_content(
                     model=MODEL_NAME, 
-                    config=types.GenerateContentConfig(system_instruction=inst), 
+                    config=types.GenerateContentConfig(
+                        system_instruction="Sadece JSON liste döndür: [{\"source\":\"A\", \"target\":\"B\", \"weight\":1}]"
+                    ), 
                     contents=txt
                 )
                 raw = res.text.strip()
-                # Markdown bloklarını temizleme işlemi (bahsettiğin raw kısmı)
                 if "```" in raw:
-                    raw = raw.split("```")[1]
-                    if raw.startswith("json"):
-                        raw = raw[4:]
-                    raw = raw.strip()
+                    raw = raw.split("```")[1].replace("json", "").strip()
                 
                 try:
                     data = json.loads(raw)
-                    if isinstance(data, list): 
-                        extracted_data.extend(data)
-                except: 
+                    if isinstance(data, list): extracted_data.extend(data)
+                except:
+                    print(f"DEBUG: Sayfa {i+1} JSON hatası aldı.")
                     continue
         
         doc.close()
         os.remove(temp_pdf)
-        
-        if not extracted_data: 
+
+        if not extracted_data:
+            print("DEBUG: Hiç veri çıkarılamadı!")
             return {"status": "error", "message": "Veri bulunamadı."}
-        
+
+        # Veriyi CSV'ye yazma
         df = pd.DataFrame(extracted_data)
         df.columns = [c.lower() for c in df.columns]
-        df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
+        df.to_csv(out_path, index=False)
+        print(f"DEBUG: Dosya başarıyla yazıldı: {out_path}")
         
-        out_name = "hna_data.csv"
-        df.to_csv(os.path.join(user_path, out_name), index=False)
-        db.add(Analysis(user_id=db_user.id, file_name=out_name, analysis_type="pdf_to_hna"))
-        db.commit()
-        return {"status": "success", "file_url": f"/uploads/{username}/{out_name}"}
+        return {"status": "success", "file_url": f"/uploads/{username}/hna_data.csv"}
     except Exception as e:
+        print(f"SİSTEM HATASI: {str(e)}")
         return {"status": "error", "detail": str(e)}
 
 @app.get("/my-analyses")
