@@ -157,83 +157,85 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
     with open(temp_pdf, "wb") as b: 
         shutil.copyfileobj(file.file, b)
     
-        try:
-            doc = fitz.open(temp_pdf)
-            all_network_data = []
-            max_pages = min(len(doc), 60)
-            step = 20 
+    try:
+        doc = fitz.open(temp_pdf)
+        all_network_data = []
+        max_pages = 60
+        step = 15  
         
-            print(f"DEBUG: {max_pages} sayfa işleniyor...")
+        print(f"DEBUG: {max_pages} sayfa işleniyor (Adım: {step})...")
 
         for i in range(0, max_pages, step):
             text = ""
+            # Belirlenen aralıktaki sayfaları birleştir
             for page_num in range(i, min(i + step, max_pages)):
-                text += doc[page_num].get_text() + "\n"
+                if page_num < len(doc):
+                    text += doc[page_num].get_text() + "\n"
             
-            if not text.strip(): continue
+            if not text.strip(): 
+                continue
 
             prompt = f"""
             Bu metindeki karakterleri ve aralarındaki sosyal ağ ilişkilerini analiz et.
-            Sadece JSON listesi döndür. Format: [ {{"source": "İsim 1", "target": "İsim 2", "weight": 3}} ]
-            Metin: {text}
+            Sadece JSON formatında bir liste döndür. Başka metin ekleme.
+            Format: [ {{"source": "İsim 1", "target": "İsim 2", "weight": 3}} ]
+            
+            Metin Parçası: {text}
             """
 
             try:
+                # Gemini Çağrısı
                 res = GEMINI_CLIENT.models.generate_content(
                     model="gemini-2.5-flash", 
-                    contents=prompt,
-                    config={'response_mime_type': 'application/json'}
+                    contents=prompt
                 )
                 
-                batch_data = json.loads(res.text)
+                raw_json = res.text.strip()
+                # Markdown temizliği
+                if "```" in raw_json:
+                    raw_json = raw_json.split("```")[1].replace("json", "").strip()
+                
+                batch_data = json.loads(raw_json)
                 if isinstance(batch_data, list):
                     all_network_data.extend(batch_data)
-                    
-                    # --- KRİTİK EKLEME: HER ADIMDA KAYDET ---
-                    temp_df = pd.DataFrame(all_network_data)
-                    temp_df.columns = [c.lower() for c in temp_df.columns]
-                    # Aynı bağları birleştir
-                    final_df = temp_df.groupby(['source', 'target'], as_index=False)['weight'].sum()
-                    final_df.to_csv(out_path, index=False)
-                    # ---------------------------------------
-                    
-                print(f"DEBUG: {i+step}. sayfaya kadar işlendi ve CSV güncellendi.")
+                print(f"DEBUG: {i+step}. sayfaya kadar olan blok işlendi.")
 
             except Exception as e:
-                # Eğer burada bir hata (429 gibi) olursa döngüyü kır (break)
-                # Böylece 'except' kısmına düşmeden eldeki veriyi başarıyla döner.
-                print(f"Sınır aşıldı veya hata oluştu (Sayfa {i}): {e}")
-                break # Döngüden çık, eldekilerle devam et
-
+                print(f"DEBUG: API veya JSON Hatası (Blok {i}): {e}")
+                # Hata 429 (Limit) ise döngüyü kırıp eldeki veriyi kaydedelim
+                if "429" in str(e):
+                    break
+                continue
+        
         doc.close()
-        if os.path.exists(temp_pdf): os.remove(temp_pdf)
+        if os.path.exists(temp_pdf): 
+            os.remove(temp_pdf)
 
-        # Eğer hiç veri toplanamadıysa hata döndür
         if not all_network_data:
-            return {"status": "error", "message": "Hiç veri çıkarılamadan limite takıldı."}
+            return {"status": "error", "message": "PDF'den ilişki çıkarılamadı."}
 
-        # Döngü bittiğinde (veya break ile çıktığında) son durumu döndür
-        return {
-            "status": "success", 
-            "message": f"Analiz limit nedeniyle veya başarıyla tamamlandı. {len(all_network_data)} ham bağ kaydedildi.",
-            "file_url": f"/uploads/{username}/hna_data.csv"
-        }
+        # Veriyi Grupla ve Kaydet
+        df = pd.DataFrame(all_network_data)
+        df.columns = [c.lower() for c in df.columns]
+        
+        if not df.empty:
+            df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
+            df.to_csv(out_path, index=False)
+            print(f"DEBUG: Dosya başarıyla yazıldı: {out_path}")
+            
+            return {
+                "status": "success", 
+                "message": f"Analiz tamamlandı. {len(df)} bağ kuruldu.",
+                "file_url": f"/uploads/{username}/hna_data.csv"
+            }
+        
+        return {"status": "error", "message": "İşlenecek veri oluşmadı."}
 
     except Exception as e:
-        if os.path.exists(temp_pdf): os.remove(temp_pdf)
-        return {"status": "error", "detail": str(e)}
-
-        
-    
-        
-
-    except Exception as e:
-        if os.path.exists(temp_pdf): os.remove(temp_pdf)
+        if os.path.exists(temp_pdf): 
+            os.remove(temp_pdf)
         print(f"SİSTEM HATASI: {str(e)}")
         return {"status": "error", "detail": str(e)}
-
-
-
 @app.get("/my-analyses")
 def list_analyses(token: str, db: Session = Depends(get_db)):
     uname = verify_token(token)
