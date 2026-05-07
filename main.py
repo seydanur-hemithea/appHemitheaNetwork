@@ -161,7 +161,7 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
         doc = fitz.open(temp_pdf)
         all_network_data = []
         max_pages = min(len(doc), 60)
-        step = 15 
+        step = 20 
         
         print(f"DEBUG: {max_pages} sayfa işleniyor...")
 
@@ -180,7 +180,7 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
 
             try:
                 res = GEMINI_CLIENT.models.generate_content(
-                    model="gemini-1.5-flash", # Kota için 1.5-flash önerilir
+                    model="gemini-2.5-flash", 
                     contents=prompt,
                     config={'response_mime_type': 'application/json'}
                 )
