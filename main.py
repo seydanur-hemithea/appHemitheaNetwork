@@ -81,8 +81,8 @@ def verify_token(token: str):
         return payload.get("sub")
     except JWTError:
         raise HTTPException(status_code=401, detail="Yetkisiz erişim")
+NLP_SERVICE_URL = os.getenv("NLP_SERVICE_URL") + "/analyze"
 
-NLP_SERVICE_URL = os.getenv("NLP_SERVICE_URL")
 
 
 app = FastAPI(title="Hemithea Engine", version="2.6.5")
