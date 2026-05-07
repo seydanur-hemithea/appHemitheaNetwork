@@ -140,64 +140,102 @@ async def upload_manual_csv(token: str, username: str = Form(...), file: UploadF
     db.add(Analysis(user_id=db_user.id, file_name=f_name, analysis_type="manual_csv"))
     db.commit()
     return {"status": "success", "file_url": f"/uploads/{username}/{f_name}"}
-
-
-            
-            
-        
-
-
-
 @app.post("/upload-pdf")
-async def upload_and_process_pdf(token: str, username: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
-    # ... (Auth ve Klasör hazırlama kısımları aynı kalıyor) ...
+async def upload_and_process_pdf(
+    token: str, 
+    username: str = Form(...), 
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db)
+):
+    # 1. AUTH (Kullanıcı Doğrulama)
+    # verify_token fonksiyonun zaten mevcut, kullanıcıyı validate ediyoruz
+    user_data = verify_token(token)
+    if not user_data or user_data.get("sub") != username:
+        raise HTTPException(status_code=401, detail="Yetkisiz erişim veya geçersiz token.")
 
+    # Veritabanında kullanıcıyı kontrol et
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+
+    # 2. KLASÖR HAZIRLAMA
+    # Kullanıcıya özel klasör yolu: uploads/seyda/
+    user_path = os.path.join(UPLOAD_DIR, username)
+    if not os.path.exists(user_path): 
+        os.makedirs(user_path)
+    
+    # Çıktı CSV yolu ve Geçici PDF yolu
+    out_path = os.path.join(user_path, "hna_data.csv")
     temp_pdf = os.path.join(user_path, "temp_proc.pdf")
+
+    # Eğer önceden bir analiz varsa temizle (Yeni analiz için taze sayfa)
+    if os.path.exists(out_path):
+        os.remove(out_path)
+
+    # 3. DOSYAYI KAYDETME (Temporary Storage)
     with open(temp_pdf, "wb") as b: 
         shutil.copyfileobj(file.file, b)
     
     try:
+        # 4. PDF'DEN METİN AYIKLAMA (PyMuPDF)
         doc = fitz.open(temp_pdf)
         full_text = ""
-        # 60 sayfayı tek bir metin haline getiriyoruz
-        for page in doc:
-            full_text += page.get_text() + "\n"
+        # Sayfa sınırı koyabilirsin (Örn: İlk 60 sayfa)
+        max_p = min(len(doc), 60)
+        for i in range(max_p):
+            full_text += doc[i].get_text() + "\n"
         doc.close()
 
-        # --- YENİ ANALİZ KATMANI (GEMINI YERİNE) ---
+        if not full_text.strip():
+            raise HTTPException(status_code=400, detail="PDF içeriği okunamadı veya boş.")
+
+        # 5. NLP SERVİSİNE PASLAMA (Katmanlı Mimari Geçişi)
         async with httpx.AsyncClient() as client:
-            # Metni yeni Render servisine gönderiyoruz
             response = await client.post(
-                NLP_SERVICE_URL, 
+                NLP_SERVICE_URL, # 2. Render projesinin URL'si
                 json={"text": full_text},
-                timeout=120.0 # Analiz sürebilir
+                timeout=180.0 # Analiz uzun sürebilir, timeout'u geniş tuttuk
             )
         
         if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Analiz servisi hata verdi.")
-            
+            raise HTTPException(status_code=500, detail="Analiz motoru (NLP) şu an meşgul.")
+
         all_network_data = response.json()
-        
-        # --- VERİ GRUPLAMA VE KAYDETME ---
+
+        # 6. VERİYİ CSV OLARAK KAYDETME
         if all_network_data:
             df = pd.DataFrame(all_network_data)
             df.columns = [c.lower() for c in df.columns]
-            # Aynı bağları topla (Ağırlıklandır)
+            # Kaynak-Hedef bazlı gruplayıp ağırlıkları topla
             df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
             df.to_csv(out_path, index=False)
             
-            # Veritabanına kayıt
-            new_analysis = Analysis(user_id=user.id, file_name=file.filename, analysis_type="PDF_TO_HNA")
+            # Veritabanına Analiz Kaydını Ekle
+            new_analysis = Analysis(
+                user_id=user.id, 
+                file_name=file.filename, 
+                analysis_type="PDF_TO_HNA"
+            )
             db.add(new_analysis)
             db.commit()
 
-            return {"status": "success", "file_url": f"/uploads/{username}/hna_data.csv"}
+            # Geçici dosyayı temizle
+            if os.path.exists(temp_pdf): os.remove(temp_pdf)
+
+            return {
+                "status": "success", 
+                "message": "Analiz tamamlandı.",
+                "file_url": f"/uploads/{username}/hna_data.csv"
+            }
         
-        return {"status": "error", "message": "Analiz sonucu boş döndü."}
+        return {"status": "error", "message": "Karakter ilişkisi bulunamadı."}
 
     except Exception as e:
+        # Hata durumunda geçici PDF'i mutlaka sil ki yer kaplamasın
         if os.path.exists(temp_pdf): os.remove(temp_pdf)
-        return {"status": "error", "detail": str(e)}
+        print(f"HATA: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
         
 @app.get("/my-analyses")
 def list_analyses(token: str, db: Session = Depends(get_db)):
