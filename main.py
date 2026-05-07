@@ -157,17 +157,16 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
     with open(temp_pdf, "wb") as b: 
         shutil.copyfileobj(file.file, b)
     
-    try:
+        try:
         doc = fitz.open(temp_pdf)
         all_network_data = []
-        max_pages = 60
-        step = 15  # 20 yerine 15 yaparak hem bağları koruyoruz hem de API yükünü dengeliyoruz
+        max_pages = min(len(doc), 60)
+        step = 15 
         
-        print(f"DEBUG: {max_pages} sayfa işleniyor (Adım: {step})...")
+        print(f"DEBUG: {max_pages} sayfa işleniyor...")
 
         for i in range(0, max_pages, step):
             text = ""
-            # Belirlenen aralıktaki sayfaları birleştir
             for page_num in range(i, min(i + step, max_pages)):
                 text += doc[page_num].get_text() + "\n"
             
@@ -175,55 +174,58 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
 
             prompt = f"""
             Bu metindeki karakterleri ve aralarındaki sosyal ağ ilişkilerini analiz et.
-            Sadece JSON formatında bir liste döndür. Başka metin ekleme.
-            Format: [ {{"source": "İsim 1", "target": "İsim 2", "weight": 3}} ]
-            
-            Metin Parçası: {text}
+            Sadece JSON listesi döndür. Format: [ {{"source": "İsim 1", "target": "İsim 2", "weight": 3}} ]
+            Metin: {text}
             """
 
-            # Gemini Çağrısı (Model ismini 1.5-flash yaparak kotayı rahatlatıyoruz)
-            res = GEMINI_CLIENT.models.generate_content(
-                model="gemini-2.5-flash", 
-                contents=prompt
-            )
-            
-            raw_json = res.text.strip()
-            # Markdown temizliği
-            if "```" in raw_json:
-                raw_json = raw_json.split("```")[1].replace("json", "").strip()
-            
             try:
-                batch_data = json.loads(raw_json)
+                res = GEMINI_CLIENT.models.generate_content(
+                    model="gemini-1.5-flash", # Kota için 1.5-flash önerilir
+                    contents=prompt,
+                    config={'response_mime_type': 'application/json'}
+                )
+                
+                batch_data = json.loads(res.text)
                 if isinstance(batch_data, list):
                     all_network_data.extend(batch_data)
-                print(f"DEBUG: {i+step}. sayfaya kadar olan blok işlendi.")
+                    
+                    # --- KRİTİK EKLEME: HER ADIMDA KAYDET ---
+                    temp_df = pd.DataFrame(all_network_data)
+                    temp_df.columns = [c.lower() for c in temp_df.columns]
+                    # Aynı bağları birleştir
+                    final_df = temp_df.groupby(['source', 'target'], as_index=False)['weight'].sum()
+                    final_df.to_csv(out_path, index=False)
+                    # ---------------------------------------
+                    
+                print(f"DEBUG: {i+step}. sayfaya kadar işlendi ve CSV güncellendi.")
+
             except Exception as e:
-                print(f"DEBUG: JSON Parse Hatası (Blok {i}): {e}")
-                continue
-        
+                # Eğer burada bir hata (429 gibi) olursa döngüyü kır (break)
+                # Böylece 'except' kısmına düşmeden eldeki veriyi başarıyla döner.
+                print(f"Sınır aşıldı veya hata oluştu (Sayfa {i}): {e}")
+                break # Döngüden çık, eldekilerle devam et
+
         doc.close()
         if os.path.exists(temp_pdf): os.remove(temp_pdf)
 
+        # Eğer hiç veri toplanamadıysa hata döndür
         if not all_network_data:
-            return {"status": "error", "message": "PDF'den ilişki çıkarılamadı."}
+            return {"status": "error", "message": "Hiç veri çıkarılamadan limite takıldı."}
 
-        # Veriyi Grupla ve Kaydet (A-B ilişkilerini tekilleştir)
-        df = pd.DataFrame(all_network_data)
-        df.columns = [c.lower() for c in df.columns]
+        # Döngü bittiğinde (veya break ile çıktığında) son durumu döndür
+        return {
+            "status": "success", 
+            "message": f"Analiz limit nedeniyle veya başarıyla tamamlandı. {len(all_network_data)} ham bağ kaydedildi.",
+            "file_url": f"/uploads/{username}/hna_data.csv"
+        }
+
+    except Exception as e:
+        if os.path.exists(temp_pdf): os.remove(temp_pdf)
+        return {"status": "error", "detail": str(e)}
+
         
-        if not df.empty:
-            # Aynı source-target çiftlerini topla
-            df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
-            df.to_csv(out_path, index=False)
-            print(f"DEBUG: Dosya başarıyla yazıldı: {out_path}")
-            
-            return {
-                "status": "success", 
-                "message": f"Analiz bitti. {len(df)} bağ kuruldu.",
-                "file_url": f"/uploads/{username}/hna_data.csv"
-            }
+    
         
-        return {"status": "error", "message": "İşlenecek veri oluşmadı."}
 
     except Exception as e:
         if os.path.exists(temp_pdf): os.remove(temp_pdf)
