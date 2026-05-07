@@ -1,3 +1,4 @@
+import httpx
 
 import os
 import json
@@ -81,8 +82,8 @@ def verify_token(token: str):
     except JWTError:
         raise HTTPException(status_code=401, detail="Yetkisiz erişim")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+NLP_SERVICE_URL = os.getenv("NLP_SERVICE_URL")
+
 
 app = FastAPI(title="Hemithea Engine", version="2.6.5")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -140,18 +141,16 @@ async def upload_manual_csv(token: str, username: str = Form(...), file: UploadF
     db.commit()
     return {"status": "success", "file_url": f"/uploads/{username}/{f_name}"}
 
+
+            
+            
+        
+
+
+
 @app.post("/upload-pdf")
 async def upload_and_process_pdf(token: str, username: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
-    verify_token(token)
-    
-    # 1. Yolları ve Klasörleri Hazırla
-    user_path = os.path.join(UPLOAD_DIR, username)
-    if not os.path.exists(user_path): 
-        os.makedirs(user_path)
-    
-    out_path = os.path.join(user_path, "hna_data.csv")
-    if os.path.exists(out_path):
-        os.remove(out_path) # Yeni analiz için eskiyi temizle
+    # ... (Auth ve Klasör hazırlama kısımları aynı kalıyor) ...
 
     temp_pdf = os.path.join(user_path, "temp_proc.pdf")
     with open(temp_pdf, "wb") as b: 
@@ -159,83 +158,47 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
     
     try:
         doc = fitz.open(temp_pdf)
-        all_network_data = []
-        max_pages = 60
-        step = 15  
-        
-        print(f"DEBUG: {max_pages} sayfa işleniyor (Adım: {step})...")
-
-        for i in range(0, max_pages, step):
-            text = ""
-            # Belirlenen aralıktaki sayfaları birleştir
-            for page_num in range(i, min(i + step, max_pages)):
-                if page_num < len(doc):
-                    text += doc[page_num].get_text() + "\n"
-            
-            if not text.strip(): 
-                continue
-
-            prompt = f"""
-            Bu metindeki karakterleri ve aralarındaki sosyal ağ ilişkilerini analiz et.
-            Sadece JSON formatında bir liste döndür. Başka metin ekleme.
-            Format: [ {{"source": "İsim 1", "target": "İsim 2", "weight": 3}} ]
-            
-            Metin Parçası: {text}
-            """
-
-            try:
-                # Gemini Çağrısı
-                res = GEMINI_CLIENT.models.generate_content(
-                    model="gemini-2.5-flash", 
-                    contents=prompt
-                )
-                
-                raw_json = res.text.strip()
-                # Markdown temizliği
-                if "```" in raw_json:
-                    raw_json = raw_json.split("```")[1].replace("json", "").strip()
-                
-                batch_data = json.loads(raw_json)
-                if isinstance(batch_data, list):
-                    all_network_data.extend(batch_data)
-                print(f"DEBUG: {i+step}. sayfaya kadar olan blok işlendi.")
-
-            except Exception as e:
-                print(f"DEBUG: API veya JSON Hatası (Blok {i}): {e}")
-                # Hata 429 (Limit) ise döngüyü kırıp eldeki veriyi kaydedelim
-                if "429" in str(e):
-                    break
-                continue
-        
+        full_text = ""
+        # 60 sayfayı tek bir metin haline getiriyoruz
+        for page in doc:
+            full_text += page.get_text() + "\n"
         doc.close()
-        if os.path.exists(temp_pdf): 
-            os.remove(temp_pdf)
 
-        if not all_network_data:
-            return {"status": "error", "message": "PDF'den ilişki çıkarılamadı."}
-
-        # Veriyi Grupla ve Kaydet
-        df = pd.DataFrame(all_network_data)
-        df.columns = [c.lower() for c in df.columns]
+        # --- YENİ ANALİZ KATMANI (GEMINI YERİNE) ---
+        async with httpx.AsyncClient() as client:
+            # Metni yeni Render servisine gönderiyoruz
+            response = await client.post(
+                NLP_SERVICE_URL, 
+                json={"text": full_text},
+                timeout=120.0 # Analiz sürebilir
+            )
         
-        if not df.empty:
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail="Analiz servisi hata verdi.")
+            
+        all_network_data = response.json()
+        
+        # --- VERİ GRUPLAMA VE KAYDETME ---
+        if all_network_data:
+            df = pd.DataFrame(all_network_data)
+            df.columns = [c.lower() for c in df.columns]
+            # Aynı bağları topla (Ağırlıklandır)
             df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
             df.to_csv(out_path, index=False)
-            print(f"DEBUG: Dosya başarıyla yazıldı: {out_path}")
             
-            return {
-                "status": "success", 
-                "message": f"Analiz tamamlandı. {len(df)} bağ kuruldu.",
-                "file_url": f"/uploads/{username}/hna_data.csv"
-            }
+            # Veritabanına kayıt
+            new_analysis = Analysis(user_id=user.id, file_name=file.filename, analysis_type="PDF_TO_HNA")
+            db.add(new_analysis)
+            db.commit()
+
+            return {"status": "success", "file_url": f"/uploads/{username}/hna_data.csv"}
         
-        return {"status": "error", "message": "İşlenecek veri oluşmadı."}
+        return {"status": "error", "message": "Analiz sonucu boş döndü."}
 
     except Exception as e:
-        if os.path.exists(temp_pdf): 
-            os.remove(temp_pdf)
-        print(f"SİSTEM HATASI: {str(e)}")
+        if os.path.exists(temp_pdf): os.remove(temp_pdf)
         return {"status": "error", "detail": str(e)}
+        
 @app.get("/my-analyses")
 def list_analyses(token: str, db: Session = Depends(get_db)):
     uname = verify_token(token)
