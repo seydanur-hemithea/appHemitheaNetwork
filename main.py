@@ -83,7 +83,6 @@ def verify_token(token: str):
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-MODEL_NAME = "gemini-2.5-flash"
 
 app = FastAPI(title="Hemithea Engine", version="2.6.5")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -184,7 +183,7 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
 
             # Gemini Çağrısı (Model ismini 1.5-flash yaparak kotayı rahatlatıyoruz)
             res = GEMINI_CLIENT.models.generate_content(
-                model="gemini-1.5-flash", 
+                model="gemini-2.5-flash", 
                 contents=prompt
             )
             
