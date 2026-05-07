@@ -158,12 +158,12 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
         shutil.copyfileobj(file.file, b)
     
         try:
-        doc = fitz.open(temp_pdf)
-        all_network_data = []
-        max_pages = min(len(doc), 60)
-        step = 20 
+            doc = fitz.open(temp_pdf)
+            all_network_data = []
+            max_pages = min(len(doc), 60)
+            step = 20 
         
-        print(f"DEBUG: {max_pages} sayfa işleniyor...")
+            print(f"DEBUG: {max_pages} sayfa işleniyor...")
 
         for i in range(0, max_pages, step):
             text = ""
