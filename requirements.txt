@@ -17,3 +17,4 @@ google-genai
 
 # --- Veri Birleştirme (Ağ analizlerini weight'e göre toplamak için) ---
 pandas
+httpx
