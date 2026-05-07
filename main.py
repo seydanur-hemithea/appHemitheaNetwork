@@ -160,7 +160,7 @@ async def upload_and_process_pdf(token: str, username: str = Form(...), file: Up
     try:
         doc = fitz.open(temp_pdf)
         all_network_data = []
-        max_pages = len(doc)
+        max_pages = 60
         step = 15  # 20 yerine 15 yaparak hem bağları koruyoruz hem de API yükünü dengeliyoruz
         
         print(f"DEBUG: {max_pages} sayfa işleniyor (Adım: {step})...")
