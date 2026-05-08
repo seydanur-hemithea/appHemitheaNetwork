@@ -149,8 +149,9 @@ async def upload_and_process_pdf(
 ):
     # 1. AUTH (Kullanıcı Doğrulama)
     # verify_token fonksiyonun zaten mevcut, kullanıcıyı validate ediyoruz
-    user_data = verify_token(token)
-    if not user_data or user_data.get("sub") != username:
+    # DOĞRU KISIM:
+    user_name_from_token = verify_token(token) # Bu zaten "seyda" gibi bir string döner
+    if not user_name_from_token or user_name_from_token != username:
         raise HTTPException(status_code=401, detail="Yetkisiz erişim veya geçersiz token.")
 
     # Veritabanında kullanıcıyı kontrol et
@@ -201,6 +202,16 @@ async def upload_and_process_pdf(
             raise HTTPException(status_code=500, detail="Analiz motoru (NLP) şu an meşgul.")
 
         all_network_data = response.json()
+        # 5. NLP SERVİSİNDEN GELEN CEVABI İŞLE
+        all_network_response = response.json() # Bu bir dict döner: {"status": "success", "network": [...]}
+
+        # Sadece 'network' listesini alıp DataFrame yapmalıyız
+        if all_network_response.get("status") == "success":
+            network_list = all_network_response.get("network", [])
+        if network_list:
+            df = pd.DataFrame(network_list)
+        # ... geri kalan CSV kayıt işlemleri
+
 
         # 6. VERİYİ CSV OLARAK KAYDETME
         if all_network_data:
