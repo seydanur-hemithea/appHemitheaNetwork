@@ -206,11 +206,12 @@ async def upload_and_process_pdf(
         all_network_response = response.json() # Bu bir dict döner: {"status": "success", "network": [...]}
 
         # Sadece 'network' listesini alıp DataFrame yapmalıyız
+        all_network_response = response.json() 
+
         if all_network_response.get("status") == "success":
             network_list = all_network_response.get("network", [])
         if network_list:
             df = pd.DataFrame(network_list)
-        # ... geri kalan CSV kayıt işlemleri
 
 
         # 6. VERİYİ CSV OLARAK KAYDETME
