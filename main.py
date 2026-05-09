@@ -176,6 +176,11 @@ async def upload_and_process_pdf(
     # 3. DOSYAYI KAYDETME (Temporary Storage)
     with open(temp_pdf, "wb") as b: 
         shutil.copyfileobj(file.file, b)
+        # Dosyayı kaydettikten sonra imleci başa al
+    file.file.seek(0) 
+    with open(temp_pdf, "wb") as b: 
+        shutil.copyfileobj(file.file, b)
+
     
     try:
         # 4. PDF'DEN METİN AYIKLAMA (PyMuPDF)
