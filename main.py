@@ -1,4 +1,5 @@
 import httpx
+import tempfile
 
 import os
 import json
@@ -161,7 +162,7 @@ async def upload_and_process_pdf(
     os.makedirs(user_path, exist_ok=True)
     
     out_path = os.path.join(user_path, "hna_data.csv")
-    temp_pdf = os.path.join(user_path, "temp_proc.pdf")
+    temp_pdf = os.path.join(tempfile.gettempdir(), f"{username}_temp.pdf")
 
     # 3. PDF'İ KAYDET VE METNİ ÇIKAR
     try:
