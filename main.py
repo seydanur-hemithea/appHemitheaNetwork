@@ -190,10 +190,9 @@ async def upload_and_process_pdf(
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail="NLP servisi hata döndürdü.")
 
-        # 5. VERİYİ CSV OLARAK KAYDET
+        # 5. VERİYİ İŞLE VE CSV OLARAK KAYDET
         all_network_response = response.json()
         
-        # Hugging Face'den gelen verinin formatını kontrol et
         if all_network_response.get("status") == "success":
             network_list = all_network_response.get("network", [])
             
@@ -201,63 +200,37 @@ async def upload_and_process_pdf(
                 df = pd.DataFrame(network_list)
                 df.columns = [c.lower() for c in df.columns]
                 
-                # Aynı karakter çiftlerini toplayarak ağırlıklandır (Aggregation)
+                # Karakter çiftlerini gruplayıp ağırlıkları topla
                 df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
-                df.to_csv(out_path, index=False, encoding='utf-8-sig') # Excel dostu UTF-8
                 
-                # Veritabanı kaydı
-                db.add(Analysis(user_id=user.id, file_name=file.filename, analysis_type="PDF_TO_HNA"))
+                # Excel ve Android WebView uyumlu kaydetme
+                df.to_csv(out_path, index=False, encoding='utf-8-sig')
+                
+                # Veritabanına Analiz Kaydını Ekle
+                new_analysis = Analysis(
+                    user_id=user.id, 
+                    file_name=file.filename, 
+                    analysis_type="PDF_TO_HNA"
+                )
+                db.add(new_analysis)
                 db.commit()
 
                 return {
                     "status": "success", 
+                    "message": "Analiz tamamlandı.",
                     "file_url": f"/uploads/{username}/hna_data.csv"
                 }
-        
-        return {"status": "error", "message": "Analiz sonucu boş döndü."}
-
-    except Exception as e:
-        print(f"HNA_LOG_ERROR: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # Hata olsa da olmasa da geçici dosyayı temizle
-        if os.path.exists(temp_pdf):
-            os.remove(temp_pdf)
-
-
-        # 6. VERİYİ CSV OLARAK KAYDETME
-        if all_network_data:
-            df = pd.DataFrame(all_network_data)
-            df.columns = [c.lower() for c in df.columns]
-            # Kaynak-Hedef bazlı gruplayıp ağırlıkları topla
-            df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
-            df.to_csv(out_path, index=False)
-            
-            # Veritabanına Analiz Kaydını Ekle
-            new_analysis = Analysis(
-                user_id=user.id, 
-                file_name=file.filename, 
-                analysis_type="PDF_TO_HNA"
-            )
-            db.add(new_analysis)
-            db.commit()
-
-            # Geçici dosyayı temizle
-            if os.path.exists(temp_pdf): os.remove(temp_pdf)
-
-            return {
-                "status": "success", 
-                "message": "Analiz tamamlandı.",
-                "file_url": f"/uploads/{username}/hna_data.csv"
-            }
         
         return {"status": "error", "message": "Karakter ilişkisi bulunamadı."}
 
     except Exception as e:
-        # Hata durumunda geçici PDF'i mutlaka sil ki yer kaplamasın
-        if os.path.exists(temp_pdf): os.remove(temp_pdf)
-        print(f"HATA: {str(e)}")
+        print(f"HNA_LOG_ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        # Hata olsa da olmasa da geçici PDF'i temizle
+        if os.path.exists(temp_pdf):
+            os.remove(temp_pdf)
 
         
 @app.get("/my-analyses")
