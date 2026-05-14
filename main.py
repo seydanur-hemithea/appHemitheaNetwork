@@ -148,75 +148,81 @@ async def upload_and_process_pdf(
     db: Session = Depends(get_db)
 ):
     # 1. AUTH (Kullanıcı Doğrulama)
-    # verify_token fonksiyonun zaten mevcut, kullanıcıyı validate ediyoruz
-    # DOĞRU KISIM:
-    user_name_from_token = verify_token(token) # Bu zaten "seyda" gibi bir string döner
+    user_name_from_token = verify_token(token)
     if not user_name_from_token or user_name_from_token != username:
-        raise HTTPException(status_code=401, detail="Yetkisiz erişim veya geçersiz token.")
+        raise HTTPException(status_code=401, detail="Yetkisiz erişim.")
 
-    # Veritabanında kullanıcıyı kontrol et
     user = db.query(User).filter(User.username == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
 
-    # 2. KLASÖR HAZIRLAMA
-    # Kullanıcıya özel klasör yolu: uploads/seyda/
+    # 2. KLASÖR VE DOSYA YOLLARI
     user_path = os.path.join(UPLOAD_DIR, username)
-    if not os.path.exists(user_path): 
-        os.makedirs(user_path)
+    os.makedirs(user_path, exist_ok=True)
     
-    # Çıktı CSV yolu ve Geçici PDF yolu
     out_path = os.path.join(user_path, "hna_data.csv")
     temp_pdf = os.path.join(user_path, "temp_proc.pdf")
 
-    # Eğer önceden bir analiz varsa temizle (Yeni analiz için taze sayfa)
-    if os.path.exists(out_path):
-        os.remove(out_path)
-
-    # 3. DOSYAYI KAYDETME (Temporary Storage)
-    with open(temp_pdf, "wb") as b: 
-        shutil.copyfileobj(file.file, b)
-        # Dosyayı kaydettikten sonra imleci başa al
-    file.file.seek(0) 
-    with open(temp_pdf, "wb") as b: 
-        shutil.copyfileobj(file.file, b)
-
-    
+    # 3. PDF'İ KAYDET VE METNİ ÇIKAR
     try:
-        # 4. PDF'DEN METİN AYIKLAMA (PyMuPDF)
+        with open(temp_pdf, "wb") as b: 
+            shutil.copyfileobj(file.file, b)
+
         doc = fitz.open(temp_pdf)
         full_text = ""
-        # Sayfa sınırı koyabilirsin (Örn: İlk 60 sayfa)
-        max_p = min(len(doc), 60)
+        # Sayfa sınırı (Bellek yönetimi için önemli)
+        max_p = min(len(doc), 100) 
         for i in range(max_p):
             full_text += doc[i].get_text() + "\n"
         doc.close()
 
         if not full_text.strip():
-            raise HTTPException(status_code=400, detail="PDF içeriği okunamadı veya boş.")
+            raise HTTPException(status_code=400, detail="PDF metni okunamadı.")
 
-        # 5. NLP SERVİSİNE PASLAMA (Katmanlı Mimari Geçişi)
+        # 4. NLP SERVİSİNE (Hugging Face) GÖNDER
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                NLP_SERVICE_URL, # 2. Render projesinin URL'si
+                NLP_SERVICE_URL, 
                 json={"text": full_text},
-                timeout=180.0 # Analiz uzun sürebilir, timeout'u geniş tuttuk
+                timeout=300.0 # 5 dakika (Büyük analizler için)
             )
         
         if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Analiz motoru (NLP) şu an meşgul.")
+            raise HTTPException(status_code=500, detail="NLP servisi hata döndürdü.")
 
-        all_network_data = response.json()
-        # 5. NLP SERVİSİNDEN GELEN CEVABI İŞLE
-        all_network_response = response.json() # Bu bir dict döner: {"status": "success", "network": [...]}
-
-        # Sadece 'network' listesini alıp DataFrame yapmalıyız
-        all_network_response = response.json() 
-
+        # 5. VERİYİ CSV OLARAK KAYDET
+        all_network_response = response.json()
+        
+        # Hugging Face'den gelen verinin formatını kontrol et
         if all_network_response.get("status") == "success":
             network_list = all_network_response.get("network", [])
-        if network_list:
-            df = pd.DataFrame(network_list)
+            
+            if network_list:
+                df = pd.DataFrame(network_list)
+                df.columns = [c.lower() for c in df.columns]
+                
+                # Aynı karakter çiftlerini toplayarak ağırlıklandır (Aggregation)
+                df = df.groupby(['source', 'target'], as_index=False)['weight'].sum()
+                df.to_csv(out_path, index=False, encoding='utf-8-sig') # Excel dostu UTF-8
+                
+                # Veritabanı kaydı
+                db.add(Analysis(user_id=user.id, file_name=file.filename, analysis_type="PDF_TO_HNA"))
+                db.commit()
+
+                return {
+                    "status": "success", 
+                    "file_url": f"/uploads/{username}/hna_data.csv"
+                }
+        
+        return {"status": "error", "message": "Analiz sonucu boş döndü."}
+
+    except Exception as e:
+        print(f"HNA_LOG_ERROR: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Hata olsa da olmasa da geçici dosyayı temizle
+        if os.path.exists(temp_pdf):
+            os.remove(temp_pdf)
 
 
         # 6. VERİYİ CSV OLARAK KAYDETME
