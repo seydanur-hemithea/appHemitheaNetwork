@@ -8,7 +8,7 @@ bcrypt==4.0.1
 psycopg2-binary
 python-jose[cryptography]
 gunicorn
-
+psycopg
 # --- PDF İşleme İçin Şart (fitz hatası almamak için) ---
 pymupdf
 
