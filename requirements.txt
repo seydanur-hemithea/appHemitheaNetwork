@@ -5,10 +5,11 @@ python-multipart
 sqlalchemy
 passlib[bcrypt]
 bcrypt==4.0.1
-psycopg2-binary
+psycopg2-binary>=2.9.9
+psycopg[binary]
 python-jose[cryptography]
 gunicorn
-psycopg
+
 # --- PDF İşleme İçin Şart (fitz hatası almamak için) ---
 pymupdf
 
